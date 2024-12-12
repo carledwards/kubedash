@@ -71,7 +71,7 @@ func main() {
 	box := tview.NewBox().
 		SetBorder(true).
 		SetBorderColor(tcell.ColorGray).
-		SetTitle(fmt.Sprintf(" %s ", dataProvider.GetClusterName())).
+		SetTitle(fmt.Sprintf(" %s [Press 'r' to refresh, 'c' to clear log] ", dataProvider.GetClusterName())).
 		SetTitleAlign(tview.AlignCenter).
 		SetBorderAttributes(tcell.AttrDim)
 
@@ -129,66 +129,71 @@ func main() {
 	// Set initial selection
 	table.Select(1, 0)
 
-	// Set up auto-refresh ticker
-	ticker := time.NewTicker(10 * time.Second)
-	go func() {
-		for range ticker.C {
-			if !showingDetails {
-				isRefreshing.Store(true)
-				app.QueueUpdateDraw(func() {})
+	// Function to refresh data
+	refreshData := func() {
+		if !showingDetails && !isRefreshing.Load() {
+			isRefreshing.Store(true)
+			app.QueueUpdateDraw(func() {})
 
-				currentRow, currentCol := table.GetSelection()
+			currentRow, currentCol := table.GetSelection()
 
-				go func() {
-					newNodeData, newPodsByNode, err := dataProvider.UpdateNodeData(includeNamespaces, excludeNamespaces)
-					if err != nil {
-						fmt.Printf("Error updating data: %v\n", err)
-						return
+			go func() {
+				newNodeData, newPodsByNode, err := dataProvider.UpdateNodeData(includeNamespaces, excludeNamespaces)
+				if err != nil {
+					fmt.Printf("Error updating data: %v\n", err)
+					return
+				}
+
+				app.QueueUpdateDraw(func() {
+					// Check for changes and update changelog
+					for nodeName, newData := range newNodeData {
+						changes := stateCache.Compare(nodeName, cmd.ResourceState{
+							Data:      newData,
+							Timestamp: time.Now(),
+						})
+						for _, change := range changes {
+							changeLogView.AddChange(change)
+						}
 					}
 
-					app.QueueUpdateDraw(func() {
-						// Check for changes and update changelog
-						for nodeName, newData := range newNodeData {
+					// Check for removed nodes
+					for nodeName := range nodeView.GetNodeMap() {
+						if _, exists := newNodeData[nodeName]; !exists {
 							changes := stateCache.Compare(nodeName, cmd.ResourceState{
-								Data:      newData,
+								Data:      nil,
 								Timestamp: time.Now(),
 							})
 							for _, change := range changes {
 								changeLogView.AddChange(change)
 							}
 						}
+					}
 
-						// Check for removed nodes
-						for nodeName := range nodeView.GetNodeMap() {
-							if _, exists := newNodeData[nodeName]; !exists {
-								changes := stateCache.Compare(nodeName, cmd.ResourceState{
-									Data:      nil,
-									Timestamp: time.Now(),
-								})
-								for _, change := range changes {
-									changeLogView.AddChange(change)
-								}
-							}
-						}
+					// Update nodeView's map
+					for k := range nodeView.GetNodeMap() {
+						delete(nodeView.GetNodeMap(), k)
+					}
+					for k, v := range dataProvider.GetNodeMap() {
+						nodeView.GetNodeMap()[k] = v
+					}
 
-						// Update nodeView's map
-						for k := range nodeView.GetNodeMap() {
-							delete(nodeView.GetNodeMap(), k)
-						}
-						for k, v := range dataProvider.GetNodeMap() {
-							nodeView.GetNodeMap()[k] = v
-						}
+					updateTable(table, newNodeData, newPodsByNode)
+					if currentRow < table.GetRowCount() {
+						table.Select(currentRow, currentCol)
+					} else if table.GetRowCount() > 1 {
+						table.Select(table.GetRowCount()-1, currentCol)
+					}
+					isRefreshing.Store(false)
+				})
+			}()
+		}
+	}
 
-						updateTable(table, newNodeData, newPodsByNode)
-						if currentRow < table.GetRowCount() {
-							table.Select(currentRow, currentCol)
-						} else if table.GetRowCount() > 1 {
-							table.Select(table.GetRowCount()-1, currentCol)
-						}
-						isRefreshing.Store(false)
-					})
-				}()
-			}
+	// Set up auto-refresh ticker
+	ticker := time.NewTicker(10 * time.Second)
+	go func() {
+		for range ticker.C {
+			go refreshData()
 		}
 	}()
 	defer ticker.Stop()
@@ -227,6 +232,12 @@ func main() {
 		// Handle global 'c' key for clearing changelog
 		if !showingDetails && event.Rune() == 'c' {
 			changeLogView.Clear()
+			return nil
+		}
+
+		// Handle global 'r' key for refreshing data
+		if !showingDetails && event.Rune() == 'r' {
+			go refreshData()
 			return nil
 		}
 
