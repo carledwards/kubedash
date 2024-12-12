@@ -30,7 +30,6 @@ func main() {
 
 	for _, ns := range namespaces {
 		if strings.HasPrefix(ns, "-") {
-			// Remove the "-" prefix and add to exclude list
 			excludeNamespaces[strings.TrimPrefix(ns, "-")] = true
 		} else {
 			includeNamespaces[ns] = true
@@ -46,6 +45,12 @@ func main() {
 
 	// Create details view
 	detailsView := cmd.NewNodeDetailsView()
+
+	// Create changelog view
+	changeLogView := cmd.NewChangeLogView()
+
+	// Create state cache for tracking changes
+	stateCache := cmd.NewStateCache()
 
 	fmt.Println("Creating data provider...")
 
@@ -65,24 +70,25 @@ func main() {
 	box := tview.NewBox().
 		SetBorder(true).
 		SetBorderColor(tcell.ColorGray).
-		SetTitle(fmt.Sprintf(" %s ", dataProvider.GetClusterName())). // Set cluster name as title with padding
-		SetTitleAlign(tview.AlignCenter).                             // Center the title
+		SetTitle(fmt.Sprintf(" %s ", dataProvider.GetClusterName())).
+		SetTitleAlign(tview.AlignCenter).
 		SetBorderAttributes(tcell.AttrDim)
 
-	// Create a flex container for the table
-	tableFlex := tview.NewFlex().
+	// Create a flex container for the table and changelog
+	mainFlex := tview.NewFlex().
 		SetDirection(tview.FlexRow).
-		AddItem(table, 0, 1, true)
+		AddItem(table, 0, 2, true).
+		AddItem(changeLogView.GetFlex(), 0, 1, false)
 
 	// Create a flex container with padding
 	flex := tview.NewFlex().
 		SetDirection(tview.FlexRow).
-		AddItem(nil, 1, 1, false). // Top padding
+		AddItem(nil, 1, 1, false).
 		AddItem(tview.NewFlex().
 			SetDirection(tview.FlexColumn).
-			AddItem(nil, 1, 1, false). // Left padding
+			AddItem(nil, 1, 1, false).
 			AddItem(box, 0, 1, true).
-			AddItem(nil, 1, 1, false), // Right padding
+			AddItem(nil, 1, 1, false),
 			0, 1, true)
 
 	// Track if we're showing details view
@@ -106,6 +112,14 @@ func main() {
 		nodeView.GetNodeMap()[k] = v
 	}
 
+	// Store initial state in cache
+	for nodeName, data := range nodeData {
+		stateCache.Put(nodeName, cmd.ResourceState{
+			Data:      data,
+			Timestamp: time.Now(),
+		})
+	}
+
 	// Update table with initial data
 	updateTable(table, nodeData, podsByNode)
 
@@ -116,24 +130,45 @@ func main() {
 	ticker := time.NewTicker(10 * time.Second)
 	go func() {
 		for range ticker.C {
-			if !showingDetails { // Only update when not in details view
+			if !showingDetails {
 				isRefreshing.Store(true)
-				app.QueueUpdateDraw(func() {}) // Force initial draw
+				app.QueueUpdateDraw(func() {})
 
-				// Store current selection
 				currentRow, currentCol := table.GetSelection()
 
-				// Update data in background
 				go func() {
-					nodeData, podsByNode, err := dataProvider.UpdateNodeData(includeNamespaces, excludeNamespaces)
+					newNodeData, newPodsByNode, err := dataProvider.UpdateNodeData(includeNamespaces, excludeNamespaces)
 					if err != nil {
-						// Log error but don't crash
 						fmt.Printf("Error updating data: %v\n", err)
 						return
 					}
 
 					app.QueueUpdateDraw(func() {
-						// Update nodeView's map with the provider's map
+						// Check for changes and update changelog
+						for nodeName, newData := range newNodeData {
+							changes := stateCache.Compare(nodeName, cmd.ResourceState{
+								Data:      newData,
+								Timestamp: time.Now(),
+							})
+							for _, change := range changes {
+								changeLogView.AddChange(change)
+							}
+						}
+
+						// Check for removed nodes
+						for nodeName := range nodeView.GetNodeMap() {
+							if _, exists := newNodeData[nodeName]; !exists {
+								changes := stateCache.Compare(nodeName, cmd.ResourceState{
+									Data:      nil,
+									Timestamp: time.Now(),
+								})
+								for _, change := range changes {
+									changeLogView.AddChange(change)
+								}
+							}
+						}
+
+						// Update nodeView's map
 						for k := range nodeView.GetNodeMap() {
 							delete(nodeView.GetNodeMap(), k)
 						}
@@ -141,12 +176,10 @@ func main() {
 							nodeView.GetNodeMap()[k] = v
 						}
 
-						updateTable(table, nodeData, podsByNode)
-						// Restore previous selection if it's still valid
+						updateTable(table, newNodeData, newPodsByNode)
 						if currentRow < table.GetRowCount() {
 							table.Select(currentRow, currentCol)
 						} else if table.GetRowCount() > 1 {
-							// If the previous row no longer exists, select the last row
 							table.Select(table.GetRowCount()-1, currentCol)
 						}
 						isRefreshing.Store(false)
@@ -171,27 +204,19 @@ func main() {
 
 	// Set the draw func to handle resizing
 	box.SetDrawFunc(func(screen tcell.Screen, x, y, width, height int) (int, int, int, int) {
-		// Calculate the available space for the table
-		tableWidth := width - 2   // Account for borders
-		tableHeight := height - 2 // Account for borders
-
-		// Draw spinner in top right if refreshing
 		if isRefreshing.Load() {
 			spinnerChar := string(spinnerChars[int(spinnerIndex.Load())%len(spinnerChars)])
 			tview.Print(screen, spinnerChar, x+width-2, y, 1, tview.AlignRight, tcell.ColorYellow)
 		}
 
-		// Update table dimensions and draw it
-		table.SetRect(x+1, y+1, tableWidth, tableHeight)
-		tableFlex.SetRect(x+1, y+1, tableWidth, tableHeight)
-		tableFlex.Draw(screen)
+		mainFlex.SetRect(x+1, y+1, width-2, height-2)
+		mainFlex.Draw(screen)
 
 		return x, y, width, height
 	})
 
 	// Add keyboard input handler
 	app.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
-		// Handle ESC key to close details view
 		if event.Key() == tcell.KeyEscape {
 			if showingDetails {
 				showingDetails = false
@@ -201,7 +226,6 @@ func main() {
 			}
 		}
 
-		// Handle scrolling in details view
 		if showingDetails {
 			row, _ := detailsView.GetTable().GetSelection()
 			switch event.Key() {
@@ -238,12 +262,11 @@ func main() {
 			}
 		}
 
-		// Only process other keys if details view is not shown
 		if !showingDetails {
 			row, col := table.GetSelection()
 			switch event.Key() {
 			case tcell.KeyUp:
-				if row > 1 { // Don't select header row
+				if row > 1 {
 					table.Select(row-1, col)
 				}
 				return nil
@@ -263,7 +286,6 @@ func main() {
 				}
 				return nil
 			case tcell.KeyEnter:
-				// Get selected node name
 				nodeName := table.GetCell(row, 0).Text
 				if node, ok := nodeView.GetNodeMap()[nodeName]; ok {
 					detailsView.ShowNodeDetails(node)
@@ -298,23 +320,19 @@ func main() {
 
 	// Handle window resize
 	app.SetBeforeDrawFunc(func(screen tcell.Screen) bool {
-		// Get new screen dimensions
 		width, height := screen.Size()
-		// Update flex container dimensions
 		if !showingDetails {
 			flex.SetRect(0, 0, width, height)
 		} else {
 			detailsView.GetFlex().SetRect(0, 0, width, height)
 		}
-		return false // Let the application draw normally
+		return false
 	})
 
 	fmt.Println("Starting UI...")
 
-	// Set input focus to the table
 	app.SetFocus(table)
 
-	// Run application
 	if err := app.SetRoot(flex, true).EnableMouse(true).Run(); err != nil {
 		panic(err)
 	}
@@ -322,13 +340,10 @@ func main() {
 
 // updateTable updates the table with fresh node and pod data
 func updateTable(table *tview.Table, nodeData map[string]cmd.NodeData, podsByNode map[string]map[string][]string) {
-	// Clear existing data but preserve headers
 	table.Clear()
 
-	// Create headers
 	headers := []string{"Node Name", "Status", "Version", "Age", "PODS"}
 
-	// Get all namespaces from podsByNode
 	namespaceSet := make(map[string]bool)
 	for _, namespacePods := range podsByNode {
 		for ns := range namespacePods {
@@ -336,17 +351,14 @@ func updateTable(table *tview.Table, nodeData map[string]cmd.NodeData, podsByNod
 		}
 	}
 
-	// Convert to sorted slice
 	var namespaces []string
 	for ns := range namespaceSet {
 		namespaces = append(namespaces, ns)
 	}
 	sort.Strings(namespaces)
 
-	// Add namespace headers
 	headers = append(headers, namespaces...)
 
-	// Set up headers
 	for i, header := range headers {
 		cell := tview.NewTableCell(header).
 			SetTextColor(tcell.ColorWhite).
@@ -356,18 +368,15 @@ func updateTable(table *tview.Table, nodeData map[string]cmd.NodeData, podsByNod
 		table.SetCell(0, i, cell)
 	}
 
-	// Create a sorted slice of node names
 	var nodeNames []string
 	for name := range nodeData {
 		nodeNames = append(nodeNames, name)
 	}
 	sort.Strings(nodeNames)
 
-	// Add nodes to table in alphabetical order
 	i := 1
 	for _, nodeName := range nodeNames {
 		data := nodeData[nodeName]
-		// Basic node info
 		table.SetCell(i, 0, tview.NewTableCell(data.Name).
 			SetTextColor(tcell.ColorSkyblue).
 			SetExpansion(1))
@@ -389,7 +398,6 @@ func updateTable(table *tview.Table, nodeData map[string]cmd.NodeData, podsByNod
 			SetTextColor(tcell.ColorSkyblue).
 			SetExpansion(1))
 
-		// Add namespace columns
 		for nsIdx, namespace := range namespaces {
 			indicators := podsByNode[data.Name][namespace]
 			cell := tview.NewTableCell(strings.Join(indicators, "")).

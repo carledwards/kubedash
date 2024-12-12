@@ -21,7 +21,7 @@ func NewChangeLogView() *ChangeLogView {
 		SetSelectable(true, false)
 
 	// Set up headers
-	headers := []string{"Time", "Resource", "Change", "Field", "Old Value", "New Value"}
+	headers := []string{"Time", "Resource", "Name", "Change", "Field", "Old Value", "New Value"}
 	for i, header := range headers {
 		cell := tview.NewTableCell(header).
 			SetTextColor(tcell.ColorWhite).
@@ -34,7 +34,7 @@ func NewChangeLogView() *ChangeLogView {
 	changeBox := tview.NewBox().
 		SetBorder(true).
 		SetBorderColor(tcell.ColorGray).
-		SetTitle("Change Log").
+		SetTitle("Change Log (Most Recent First)").
 		SetBorderAttributes(tcell.AttrDim)
 
 	// Create a flex container
@@ -56,15 +56,26 @@ func (cv *ChangeLogView) GetFlex() *tview.Flex {
 
 // AddChange adds a new change event to the log
 func (cv *ChangeLogView) AddChange(change ChangeEvent) {
-	// Get the current row count
-	row := cv.table.GetRowCount()
+	// Shift existing rows down (except header)
+	rowCount := cv.table.GetRowCount()
+	if rowCount > 1 {
+		for row := rowCount - 1; row >= 1; row-- {
+			for col := 0; col < 7; col++ {
+				cell := cv.table.GetCell(row, col)
+				if cell != nil {
+					cv.table.SetCell(row+1, col, cell)
+				}
+			}
+		}
+	}
 
 	// Format the timestamp
 	timeStr := change.Timestamp.Format("15:04:05")
 
-	// Add the new row
-	cv.table.SetCell(row, 0, tview.NewTableCell(timeStr).SetTextColor(tcell.ColorWhite))
-	cv.table.SetCell(row, 1, tview.NewTableCell(change.ResourceType).SetTextColor(tcell.ColorYellow))
+	// Add the new row at position 1 (right after header)
+	cv.table.SetCell(1, 0, tview.NewTableCell(timeStr).SetTextColor(tcell.ColorWhite))
+	cv.table.SetCell(1, 1, tview.NewTableCell(change.ResourceType).SetTextColor(tcell.ColorYellow))
+	cv.table.SetCell(1, 2, tview.NewTableCell(change.ResourceName).SetTextColor(tcell.ColorAqua))
 
 	// Set change type with appropriate color
 	changeCell := tview.NewTableCell(change.ChangeType)
@@ -76,16 +87,16 @@ func (cv *ChangeLogView) AddChange(change ChangeEvent) {
 	case "Modified":
 		changeCell.SetTextColor(tcell.ColorYellow)
 	}
-	cv.table.SetCell(row, 2, changeCell)
+	cv.table.SetCell(1, 3, changeCell)
 
 	// Field name
-	cv.table.SetCell(row, 3, tview.NewTableCell(change.Field).SetTextColor(tcell.ColorSkyblue))
+	cv.table.SetCell(1, 4, tview.NewTableCell(change.Field).SetTextColor(tcell.ColorSkyblue))
 
-	// Old and new values
-	oldValue := fmt.Sprintf("%v", change.OldValue)
-	newValue := fmt.Sprintf("%v", change.NewValue)
-	cv.table.SetCell(row, 4, tview.NewTableCell(oldValue).SetTextColor(tcell.ColorGray))
-	cv.table.SetCell(row, 5, tview.NewTableCell(newValue).SetTextColor(tcell.ColorWhite))
+	// Old and new values with better formatting
+	oldValue := formatValue(change.OldValue)
+	newValue := formatValue(change.NewValue)
+	cv.table.SetCell(1, 5, tview.NewTableCell(oldValue).SetTextColor(tcell.ColorGray))
+	cv.table.SetCell(1, 6, tview.NewTableCell(newValue).SetTextColor(tcell.ColorWhite))
 
 	// Update box draw function
 	cv.box.SetDrawFunc(func(screen tcell.Screen, x, y, width, height int) (int, int, int, int) {
@@ -93,9 +104,14 @@ func (cv *ChangeLogView) AddChange(change ChangeEvent) {
 		cv.table.Draw(screen)
 		return x, y, width, height
 	})
+}
 
-	// Auto-scroll to the bottom
-	cv.table.Select(row, 0)
+// formatValue formats a value for display in the changelog
+func formatValue(value interface{}) string {
+	if value == nil {
+		return "-"
+	}
+	return fmt.Sprintf("%v", value)
 }
 
 // Clear clears all entries from the change log
@@ -103,7 +119,7 @@ func (cv *ChangeLogView) Clear() {
 	cv.table.Clear()
 
 	// Restore headers
-	headers := []string{"Time", "Resource", "Change", "Field", "Old Value", "New Value"}
+	headers := []string{"Time", "Resource", "Name", "Change", "Field", "Old Value", "New Value"}
 	for i, header := range headers {
 		cell := tview.NewTableCell(header).
 			SetTextColor(tcell.ColorWhite).

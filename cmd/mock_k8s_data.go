@@ -14,6 +14,7 @@ import (
 type MockK8sDataProvider struct {
 	nodeMap     map[string]*corev1.Node
 	clusterName string
+	podStates   map[string]map[string]PodInfo // node -> pod name -> pod info
 }
 
 // NewMockK8sDataProvider creates a new MockK8sDataProvider
@@ -21,6 +22,7 @@ func NewMockK8sDataProvider() *MockK8sDataProvider {
 	return &MockK8sDataProvider{
 		nodeMap:     make(map[string]*corev1.Node),
 		clusterName: "mock-cluster",
+		podStates:   make(map[string]map[string]PodInfo),
 	}
 }
 
@@ -71,29 +73,49 @@ func createMockNodeConditions(status string) []corev1.NodeCondition {
 	return conditions
 }
 
+func createMockPodInfo(r *rand.Rand, podName string) PodInfo {
+	// Possible pod statuses
+	statuses := []string{"Running", "Pending", "Failed", "Terminating"}
+	status := statuses[r.Intn(len(statuses))]
+
+	// Create container info
+	containers := make(map[string]ContainerInfo)
+	containerCount := r.Intn(2) + 1 // 1-2 containers per pod
+
+	for i := 0; i < containerCount; i++ {
+		containerName := fmt.Sprintf("%s-container-%d", podName, i)
+		containers[containerName] = ContainerInfo{
+			Status:       status,
+			RestartCount: r.Intn(5), // 0-4 restarts
+		}
+	}
+
+	return PodInfo{
+		Name:          podName,
+		Status:        status,
+		RestartCount:  r.Intn(10), // 0-9 restarts
+		ContainerInfo: containers,
+	}
+}
+
 func (p *MockK8sDataProvider) UpdateNodeData(includeNamespaces, excludeNamespaces map[string]bool) (map[string]NodeData, map[string]map[string][]string, error) {
-	// Initialize random number generator
 	r := rand.New(rand.NewSource(time.Now().UnixNano()))
 
-	// Create mock nodes
 	nodeNames := []string{"node1", "node2", "node3"}
 	nodeData := make(map[string]NodeData)
 	podsByNode := make(map[string]map[string][]string)
 	p.nodeMap = make(map[string]*corev1.Node)
 
-	// Mock namespaces
 	namespaces := []string{"default", "kube-system", "monitoring"}
 
 	for _, nodeName := range nodeNames {
-		// Randomly set node status
 		status := corev1.ConditionTrue
 		nodeStatus := "Ready"
-		if r.Float32() < 0.2 { // 20% chance of not being ready
+		if r.Float32() < 0.2 {
 			status = corev1.ConditionFalse
 			nodeStatus = "NotReady"
 		}
 
-		// Create mock node with detailed information
 		node := &corev1.Node{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:              nodeName,
@@ -104,46 +126,25 @@ func (p *MockK8sDataProvider) UpdateNodeData(includeNamespaces, excludeNamespace
 					"beta.kubernetes.io/arch":               "amd64",
 					"beta.kubernetes.io/os":                 "linux",
 				},
-				Annotations: map[string]string{
-					"kubeadm.alpha.kubernetes.io/cri-socket":                 "unix:///var/run/containerd/containerd.sock",
-					"node.alpha.kubernetes.io/ttl":                           "0",
-					"volumes.kubernetes.io/controller-managed-attach-detach": "true",
-				},
 			},
 			Status: corev1.NodeStatus{
-				Conditions: createMockNodeConditions(string(status)),
-				NodeInfo: corev1.NodeSystemInfo{
-					KubeletVersion:          "v1.24.0",
-					KubeProxyVersion:        "v1.24.0",
-					OperatingSystem:         "linux",
-					Architecture:            "amd64",
-					ContainerRuntimeVersion: "containerd://1.6.0",
-					OSImage:                 "Ubuntu 20.04.4 LTS",
-					KernelVersion:           "5.4.0-109-generic",
-				},
-				Addresses: []corev1.NodeAddress{
-					{Type: corev1.NodeInternalIP, Address: fmt.Sprintf("10.0.0.%d", r.Intn(255))},
-					{Type: corev1.NodeInternalDNS, Address: nodeName},
-				},
-				Capacity: corev1.ResourceList{
-					corev1.ResourceCPU:    resource.MustParse("8"),
-					corev1.ResourceMemory: resource.MustParse("16Gi"),
-					corev1.ResourcePods:   resource.MustParse("110"),
-				},
-				Allocatable: corev1.ResourceList{
-					corev1.ResourceCPU:    resource.MustParse("8"),
-					corev1.ResourceMemory: resource.MustParse("16Gi"),
-					corev1.ResourcePods:   resource.MustParse("110"),
-				},
+				Conditions:  createMockNodeConditions(string(status)),
+				NodeInfo:    corev1.NodeSystemInfo{KubeletVersion: "v1.24.0"},
+				Addresses:   []corev1.NodeAddress{{Type: corev1.NodeInternalIP, Address: fmt.Sprintf("10.0.0.%d", r.Intn(255))}},
+				Capacity:    corev1.ResourceList{corev1.ResourcePods: resource.MustParse("110")},
+				Allocatable: corev1.ResourceList{corev1.ResourcePods: resource.MustParse("110")},
 			},
 		}
 		p.nodeMap[nodeName] = node
 
-		// Initialize pod indicators for this node
 		podsByNode[nodeName] = make(map[string][]string)
+		if _, exists := p.podStates[nodeName]; !exists {
+			p.podStates[nodeName] = make(map[string]PodInfo)
+		}
 
-		// Generate pod indicators for each namespace
 		totalPods := 0
+		nodePods := make(map[string]PodInfo)
+
 		for _, ns := range namespaces {
 			if excludeNamespaces[ns] {
 				continue
@@ -152,31 +153,50 @@ func (p *MockK8sDataProvider) UpdateNodeData(includeNamespaces, excludeNamespace
 				continue
 			}
 
-			podCount := r.Intn(5) + 1 // 1-5 pods per namespace
+			podCount := r.Intn(5) + 1
 			indicators := make([]string, podCount)
+
 			for i := 0; i < podCount; i++ {
-				// Randomly assign pod status
-				rand := r.Float32()
-				switch {
-				case rand < 0.1: // 10% chance of failure
+				podName := fmt.Sprintf("%s-pod-%s-%d", nodeName, ns, i)
+
+				// Either use existing pod state or create new one
+				var podInfo PodInfo
+				if existingPod, exists := p.podStates[nodeName][podName]; exists && r.Float32() < 0.8 {
+					// 80% chance to keep existing pod state
+					podInfo = existingPod
+				} else {
+					podInfo = createMockPodInfo(r, podName)
+				}
+
+				nodePods[podName] = podInfo
+
+				// Set indicator based on pod status
+				switch podInfo.Status {
+				case "Failed":
 					indicators[i] = "[red]■[white] "
-				case rand < 0.2: // 10% chance of warning
+				case "Pending", "Terminating":
 					indicators[i] = "[yellow]■[white] "
-				default: // 80% chance of success
+				default:
 					indicators[i] = "[green]■[white] "
 				}
 			}
+
 			podsByNode[nodeName][ns] = SortPodIndicators(indicators)
 			totalPods += podCount
 		}
 
-		// Create node data
+		// Update pod states for this node
+		p.podStates[nodeName] = nodePods
+
+		// Create node data with pod information
 		nodeData[nodeName] = NodeData{
-			Name:     nodeName,
-			Status:   nodeStatus,
-			Version:  "v1.24.0",
-			PodCount: fmt.Sprintf("%d", totalPods),
-			Age:      FormatDuration(time.Since(node.CreationTimestamp.Time)),
+			Name:          nodeName,
+			Status:        nodeStatus,
+			Version:       "v1.24.0",
+			PodCount:      fmt.Sprintf("%d", totalPods),
+			Age:           FormatDuration(time.Since(node.CreationTimestamp.Time)),
+			PodIndicators: fmt.Sprintf("%d pods", totalPods),
+			Pods:          nodePods,
 		}
 	}
 

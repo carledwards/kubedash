@@ -10,6 +10,20 @@ import (
 	corev1 "k8s.io/api/core/v1"
 )
 
+// PodInfo represents the state of a pod
+type PodInfo struct {
+	Name          string
+	Status        string
+	RestartCount  int
+	ContainerInfo map[string]ContainerInfo
+}
+
+// ContainerInfo represents the state of a container
+type ContainerInfo struct {
+	Status       string
+	RestartCount int
+}
+
 // NodeData represents the state of a node and its pods
 type NodeData struct {
 	Name          string
@@ -18,6 +32,33 @@ type NodeData struct {
 	PodCount      string
 	Age           string
 	PodIndicators string
+	Pods          map[string]PodInfo // Map of pod name to pod info
+}
+
+// CompareNodeData performs a deep comparison of two NodeData instances
+func CompareNodeData(old, new NodeData) bool {
+	if old.Name != new.Name ||
+		old.Status != new.Status ||
+		old.Version != new.Version ||
+		old.PodCount != new.PodCount ||
+		old.Age != new.Age ||
+		old.PodIndicators != new.PodIndicators {
+		return true
+	}
+
+	if len(old.Pods) != len(new.Pods) {
+		return true
+	}
+
+	for podName, oldPod := range old.Pods {
+		if newPod, exists := new.Pods[podName]; !exists {
+			return true
+		} else if ComparePodInfo(oldPod, newPod) {
+			return true
+		}
+	}
+
+	return false
 }
 
 // CompareNodes checks if two node states are different
@@ -28,7 +69,7 @@ func CompareNodes(old, new map[string]NodeData) bool {
 	for name, oldData := range old {
 		if newData, exists := new[name]; !exists {
 			return true
-		} else if oldData != newData {
+		} else if CompareNodeData(oldData, newData) {
 			return true
 		}
 	}
@@ -135,4 +176,25 @@ func FormatMapAsRows(table *tview.Table, startRow int, title string, m map[strin
 		startRow++
 	}
 	return startRow
+}
+
+// ComparePodInfo compares two PodInfo instances and returns true if they differ
+func ComparePodInfo(old, new PodInfo) bool {
+	if old.Status != new.Status || old.RestartCount != new.RestartCount {
+		return true
+	}
+
+	if len(old.ContainerInfo) != len(new.ContainerInfo) {
+		return true
+	}
+
+	for containerName, oldContainer := range old.ContainerInfo {
+		if newContainer, exists := new.ContainerInfo[containerName]; !exists {
+			return true
+		} else if oldContainer != newContainer {
+			return true
+		}
+	}
+
+	return false
 }
