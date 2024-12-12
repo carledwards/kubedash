@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"flag"
 	"fmt"
 	"k8s-nodes-example/cmd"
@@ -12,329 +11,15 @@ import (
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
-	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/tools/clientcmd"
 )
-
-type arrayFlags []string
-
-func (i *arrayFlags) String() string {
-	return strings.Join(*i, ",")
-}
-
-func (i *arrayFlags) Set(value string) error {
-	// Handle comma-separated values
-	for _, item := range strings.Split(value, ",") {
-		if trimmed := strings.TrimSpace(item); trimmed != "" {
-			*i = append(*i, trimmed)
-		}
-	}
-	return nil
-}
-
-// podIndicator represents a pod's status indicator with color information
-type podIndicator struct {
-	color string // "red", "yellow", or "green"
-	text  string // The full indicator text including color codes
-}
-
-// sortPodIndicators sorts pod indicators by color (RED, YELLOW, GREEN)
-func sortPodIndicators(indicators []string) []string {
-	// Convert string indicators to podIndicator structs
-	podIndicators := make([]podIndicator, len(indicators))
-	for i, ind := range indicators {
-		var color string
-		if strings.Contains(ind, "[red]") {
-			color = "red"
-		} else if strings.Contains(ind, "[yellow]") {
-			color = "yellow"
-		} else {
-			color = "green"
-		}
-		podIndicators[i] = podIndicator{color: color, text: ind}
-	}
-
-	// Sort by color
-	sort.Slice(podIndicators, func(i, j int) bool {
-		// Define color priority (red = 0, yellow = 1, green = 2)
-		colorPriority := map[string]int{
-			"red":    0,
-			"yellow": 1,
-			"green":  2,
-		}
-		return colorPriority[podIndicators[i].color] < colorPriority[podIndicators[j].color]
-	})
-
-	// Convert back to strings
-	result := make([]string, len(podIndicators))
-	for i, ind := range podIndicators {
-		result[i] = ind.text
-	}
-	return result
-}
-
-// formatDuration formats a duration in a human-readable format
-func formatDuration(d time.Duration) string {
-	days := int(d.Hours() / 24)
-	hours := int(d.Hours()) % 24
-
-	if days >= 10 {
-		return fmt.Sprintf("%dd", days)
-	} else if days > 0 {
-		return fmt.Sprintf("%dd%dh", days, hours)
-	}
-
-	if hours > 0 {
-		return fmt.Sprintf("%dh", hours)
-	}
-
-	minutes := int(d.Minutes())
-	return fmt.Sprintf("%dm", minutes)
-}
-
-// updateNodeData updates the table with fresh node and pod data
-func updateNodeData(clientset *kubernetes.Clientset, table *tview.Table, nodeMap map[string]*corev1.Node, includeNamespaces, excludeNamespaces, visibleNamespaces map[string]bool) error {
-	// Store current state
-	oldState := make(map[string]cmd.NodeData)
-	for row := 1; row < table.GetRowCount(); row++ {
-		name := table.GetCell(row, 0).Text
-		oldState[name] = cmd.NodeData{
-			Name:     name,
-			Status:   table.GetCell(row, 1).Text,
-			Version:  table.GetCell(row, 2).Text,
-			PodCount: table.GetCell(row, 3).Text,
-			Age:      table.GetCell(row, 4).Text,
-		}
-	}
-
-	// Get nodes
-	nodes, err := clientset.CoreV1().Nodes().List(context.Background(), metav1.ListOptions{})
-	if err != nil {
-		return fmt.Errorf("failed to list nodes: %v", err)
-	}
-
-	// Build new state
-	newState := make(map[string]cmd.NodeData)
-	newNodeMap := make(map[string]*corev1.Node)
-	newVisibleNamespaces := make(map[string]bool)
-
-	// Track pod indicators by namespace for each node
-	type nodeNamespacePods map[string][]string // namespace -> pod indicators
-	podsByNode := make(map[string]nodeNamespacePods)
-
-	// Process nodes
-	for _, node := range nodes.Items {
-		nodeCopy := node
-		newNodeMap[node.Name] = &nodeCopy
-		podsByNode[node.Name] = make(nodeNamespacePods)
-
-		// Get node status - show the condition type that is not "Ready"
-		status := "Unknown"
-		for _, cond := range node.Status.Conditions {
-			if cond.Status == "True" && cond.Type != "Ready" {
-				status = string(cond.Type)
-				break
-			}
-		}
-		// If no other condition is True, use Ready condition
-		if status == "Unknown" {
-			for _, cond := range node.Status.Conditions {
-				if cond.Type == "Ready" {
-					status = string(cond.Type)
-					break
-				}
-			}
-		}
-
-		// Get pods for this node
-		pods, err := clientset.CoreV1().Pods("").List(context.Background(), metav1.ListOptions{
-			FieldSelector: "spec.nodeName=" + node.Name,
-		})
-		if err != nil {
-			return fmt.Errorf("failed to list pods for node %s: %v", node.Name, err)
-		}
-
-		// Count total and filtered pods
-		totalPods := len(pods.Items)
-		filteredPods := 0
-
-		// Create a map to store pod indicators by namespace
-		podNamesByNamespace := make(map[string][]string)
-
-		for _, pod := range pods.Items {
-			// Skip if namespace is excluded
-			if excludeNamespaces[pod.Namespace] {
-				continue
-			}
-			// Skip if we have includes and this namespace isn't included
-			if len(includeNamespaces) > 0 && !includeNamespaces[pod.Namespace] {
-				continue
-			}
-
-			filteredPods++
-
-			// Add namespace to visible set
-			newVisibleNamespaces[pod.Namespace] = true
-
-			// Check pod status and restarts
-			var indicator string
-			var restarts int32
-			for _, containerStatus := range pod.Status.ContainerStatuses {
-				restarts += containerStatus.RestartCount
-			}
-
-			// Create pod indicator based on status
-			if pod.Status.Phase == "Failed" {
-				indicator = "[red]■[white] "
-			} else if restarts > 0 {
-				indicator = "[yellow]■[white] "
-			} else {
-				indicator = "[green]■[white] "
-			}
-
-			// Initialize slice if needed
-			if podNamesByNamespace[pod.Namespace] == nil {
-				podNamesByNamespace[pod.Namespace] = make([]string, 0)
-			}
-			// Add pod indicator to the slice
-			podNamesByNamespace[pod.Namespace] = append(podNamesByNamespace[pod.Namespace], indicator)
-		}
-
-		// Sort and store pod indicators for each namespace
-		for ns, indicators := range podNamesByNamespace {
-			// Sort indicators by color (RED, YELLOW, GREEN)
-			sortedIndicators := sortPodIndicators(indicators)
-			podsByNode[node.Name][ns] = sortedIndicators
-		}
-
-		// Format pod count string
-		podCountStr := fmt.Sprintf("%d", totalPods)
-		if len(includeNamespaces) > 0 || len(excludeNamespaces) > 0 {
-			podCountStr = fmt.Sprintf("%d (%d)", filteredPods, totalPods)
-		}
-
-		// Calculate node age
-		age := formatDuration(time.Since(node.CreationTimestamp.Time))
-
-		// Store new state
-		newState[node.Name] = cmd.NodeData{
-			Name:     node.Name,
-			Status:   status,
-			Version:  node.Status.NodeInfo.KubeletVersion,
-			PodCount: podCountStr,
-			Age:      age,
-		}
-	}
-
-	// Clear existing data but preserve headers
-	table.Clear()
-
-	// Create headers
-	headers := []string{"Node Name", "Status", "Version", "Age", "PODS"}
-
-	// Add namespace columns for allowed namespaces
-	var namespaces []string
-	if len(includeNamespaces) > 0 {
-		// Use explicitly included namespaces
-		for ns := range includeNamespaces {
-			namespaces = append(namespaces, ns)
-		}
-	} else {
-		// Use visible namespaces excluding any excluded ones
-		for ns := range newVisibleNamespaces {
-			if !excludeNamespaces[ns] {
-				namespaces = append(namespaces, ns)
-			}
-		}
-	}
-	// Sort namespaces for consistent column order
-	sort.Strings(namespaces)
-
-	// Add namespace headers
-	headers = append(headers, namespaces...)
-
-	// Set up headers
-	for i, header := range headers {
-		cell := tview.NewTableCell(header).
-			SetTextColor(tcell.ColorWhite).
-			SetSelectable(false).
-			SetExpansion(1).
-			SetAttributes(tcell.AttrBold)
-		table.SetCell(0, i, cell)
-	}
-
-	// Update node map
-	for k := range nodeMap {
-		delete(nodeMap, k)
-	}
-	for k, v := range newNodeMap {
-		nodeMap[k] = v
-	}
-
-	// Update visible namespaces
-	for k := range visibleNamespaces {
-		delete(visibleNamespaces, k)
-	}
-	for k := range newVisibleNamespaces {
-		visibleNamespaces[k] = true
-	}
-
-	// Create a sorted slice of node names
-	var nodeNames []string
-	for name := range newState {
-		nodeNames = append(nodeNames, name)
-	}
-	sort.Strings(nodeNames)
-
-	// Add nodes to table in alphabetical order
-	i := 1
-	for _, nodeName := range nodeNames {
-		data := newState[nodeName]
-		// Basic node info
-		table.SetCell(i, 0, tview.NewTableCell(data.Name).
-			SetTextColor(tcell.ColorSkyblue).
-			SetExpansion(1))
-		table.SetCell(i, 1, tview.NewTableCell(data.Status).
-			SetTextColor(func() tcell.Color {
-				if data.Status == "Ready" {
-					return tcell.ColorGreen
-				}
-				return tcell.ColorRed
-			}()).
-			SetExpansion(1))
-		table.SetCell(i, 2, tview.NewTableCell(data.Version).
-			SetTextColor(tcell.ColorSkyblue).
-			SetExpansion(1))
-		table.SetCell(i, 3, tview.NewTableCell(data.Age).
-			SetTextColor(tcell.ColorSkyblue).
-			SetExpansion(1))
-		table.SetCell(i, 4, tview.NewTableCell(data.PodCount).
-			SetTextColor(tcell.ColorSkyblue).
-			SetExpansion(1))
-
-		// Add namespace columns
-		for nsIdx, namespace := range namespaces {
-			indicators := podsByNode[data.Name][namespace]
-			cell := tview.NewTableCell(strings.Join(indicators, "")).
-				SetExpansion(1).
-				SetAlign(tview.AlignLeft)
-			table.SetCell(i, 5+nsIdx, cell)
-		}
-		i++
-	}
-
-	return nil
-}
 
 func main() {
 	fmt.Println("Starting application...")
 
 	// Define namespace flags
-	var namespaces arrayFlags
-	flag.Var(&namespaces, "N", "Filter by namespace (can be specified multiple times or comma-separated, prefix with - to exclude)")
-	flag.Var(&namespaces, "namespace", "Filter by namespace (can be specified multiple times or comma-separated, prefix with - to exclude)")
+	var namespaces []string
+	flag.Var((*cmd.ArrayFlags)(&namespaces), "N", "Filter by namespace (can be specified multiple times or comma-separated, prefix with - to exclude)")
+	flag.Var((*cmd.ArrayFlags)(&namespaces), "namespace", "Filter by namespace (can be specified multiple times or comma-separated, prefix with - to exclude)")
 	flag.Parse()
 
 	// Create maps for included and excluded namespaces
@@ -360,26 +45,12 @@ func main() {
 	// Create details view
 	detailsView := cmd.NewNodeDetailsView()
 
-	// Get current context name
-	loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
-	configOverrides := &clientcmd.ConfigOverrides{}
-	kubeConfig := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(loadingRules, configOverrides)
+	fmt.Println("Creating Kubernetes client...")
 
-	config, err := kubeConfig.ClientConfig()
+	// Create Kubernetes client
+	kubeClient, clusterName, err := cmd.NewKubeClient()
 	if err != nil {
-		panic(fmt.Sprintf("Failed to get client config: %v", err))
-	}
-
-	rawConfig, err := kubeConfig.RawConfig()
-	if err != nil {
-		panic(fmt.Sprintf("Failed to get raw config: %v", err))
-	}
-
-	currentContext := rawConfig.CurrentContext
-	contextInfo := rawConfig.Contexts[currentContext]
-	clusterName := contextInfo.Cluster
-	if clusterName == "" {
-		clusterName = currentContext
+		panic(err)
 	}
 
 	// Create a box to hold everything
@@ -414,20 +85,16 @@ func main() {
 	var spinnerIndex atomic.Int32
 	var isRefreshing atomic.Bool
 
-	fmt.Println("Creating Kubernetes client...")
+	fmt.Println("Fetching nodes...")
 
-	// Create clientset
-	clientset, err := kubernetes.NewForConfig(config)
+	// Initial data load
+	nodeData, podsByNode, err := cmd.UpdateNodeData(kubeClient.Clientset, nodeView.GetNodeMap(), includeNamespaces, excludeNamespaces)
 	if err != nil {
 		panic(err)
 	}
 
-	fmt.Println("Fetching nodes...")
-
-	// Initial data load
-	if err := updateNodeData(clientset, table, nodeView.GetNodeMap(), includeNamespaces, excludeNamespaces, nodeView.GetVisibleNamespaces()); err != nil {
-		panic(err)
-	}
+	// Update table with initial data
+	updateTable(table, nodeData, podsByNode)
 
 	// Set initial selection
 	table.Select(1, 0)
@@ -445,12 +112,15 @@ func main() {
 
 				// Update data in background
 				go func() {
-					if err := updateNodeData(clientset, table, nodeView.GetNodeMap(), includeNamespaces, excludeNamespaces, nodeView.GetVisibleNamespaces()); err != nil {
+					nodeData, podsByNode, err := cmd.UpdateNodeData(kubeClient.Clientset, nodeView.GetNodeMap(), includeNamespaces, excludeNamespaces)
+					if err != nil {
 						// Log error but don't crash
 						fmt.Printf("Error updating data: %v\n", err)
+						return
 					}
 
 					app.QueueUpdateDraw(func() {
+						updateTable(table, nodeData, podsByNode)
 						// Restore previous selection if it's still valid
 						if currentRow < table.GetRowCount() {
 							table.Select(currentRow, currentCol)
@@ -626,5 +296,86 @@ func main() {
 	// Run application
 	if err := app.SetRoot(flex, true).EnableMouse(true).Run(); err != nil {
 		panic(err)
+	}
+}
+
+// updateTable updates the table with fresh node and pod data
+func updateTable(table *tview.Table, nodeData map[string]cmd.NodeData, podsByNode map[string]map[string][]string) {
+	// Clear existing data but preserve headers
+	table.Clear()
+
+	// Create headers
+	headers := []string{"Node Name", "Status", "Version", "Age", "PODS"}
+
+	// Get all namespaces from podsByNode
+	namespaceSet := make(map[string]bool)
+	for _, namespacePods := range podsByNode {
+		for ns := range namespacePods {
+			namespaceSet[ns] = true
+		}
+	}
+
+	// Convert to sorted slice
+	var namespaces []string
+	for ns := range namespaceSet {
+		namespaces = append(namespaces, ns)
+	}
+	sort.Strings(namespaces)
+
+	// Add namespace headers
+	headers = append(headers, namespaces...)
+
+	// Set up headers
+	for i, header := range headers {
+		cell := tview.NewTableCell(header).
+			SetTextColor(tcell.ColorWhite).
+			SetSelectable(false).
+			SetExpansion(1).
+			SetAttributes(tcell.AttrBold)
+		table.SetCell(0, i, cell)
+	}
+
+	// Create a sorted slice of node names
+	var nodeNames []string
+	for name := range nodeData {
+		nodeNames = append(nodeNames, name)
+	}
+	sort.Strings(nodeNames)
+
+	// Add nodes to table in alphabetical order
+	i := 1
+	for _, nodeName := range nodeNames {
+		data := nodeData[nodeName]
+		// Basic node info
+		table.SetCell(i, 0, tview.NewTableCell(data.Name).
+			SetTextColor(tcell.ColorSkyblue).
+			SetExpansion(1))
+		table.SetCell(i, 1, tview.NewTableCell(data.Status).
+			SetTextColor(func() tcell.Color {
+				if data.Status == "Ready" {
+					return tcell.ColorGreen
+				}
+				return tcell.ColorRed
+			}()).
+			SetExpansion(1))
+		table.SetCell(i, 2, tview.NewTableCell(data.Version).
+			SetTextColor(tcell.ColorSkyblue).
+			SetExpansion(1))
+		table.SetCell(i, 3, tview.NewTableCell(data.Age).
+			SetTextColor(tcell.ColorSkyblue).
+			SetExpansion(1))
+		table.SetCell(i, 4, tview.NewTableCell(data.PodCount).
+			SetTextColor(tcell.ColorSkyblue).
+			SetExpansion(1))
+
+		// Add namespace columns
+		for nsIdx, namespace := range namespaces {
+			indicators := podsByNode[data.Name][namespace]
+			cell := tview.NewTableCell(strings.Join(indicators, "")).
+				SetExpansion(1).
+				SetAlign(tview.AlignLeft)
+			table.SetCell(i, 5+nsIdx, cell)
+		}
+		i++
 	}
 }
