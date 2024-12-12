@@ -10,7 +10,6 @@ import (
 // ChangeLogView represents the view for displaying change events
 type ChangeLogView struct {
 	table *tview.Table
-	box   *tview.Box
 	flex  *tview.Flex
 }
 
@@ -18,7 +17,8 @@ type ChangeLogView struct {
 func NewChangeLogView() *ChangeLogView {
 	changeTable := tview.NewTable().
 		SetBorders(false).
-		SetSelectable(true, false)
+		SetSelectable(true, false).                                      // Make sure table is selectable
+		SetSelectedStyle(tcell.StyleDefault.Background(tcell.ColorNavy)) // Add visual feedback for focus
 
 	// Set up headers
 	headers := []string{"Time", "Resource", "Name", "Change", "Field", "Old Value", "New Value"}
@@ -31,27 +31,47 @@ func NewChangeLogView() *ChangeLogView {
 		changeTable.SetCell(0, i, cell)
 	}
 
-	changeBox := tview.NewBox().
-		SetBorder(true).
-		SetBorderColor(tcell.ColorGray).
-		SetTitle("Change Log (Most Recent First)").
-		SetBorderAttributes(tcell.AttrDim)
-
 	// Create a flex container
 	changeFlex := tview.NewFlex().
-		SetDirection(tview.FlexRow).
-		AddItem(changeBox, 0, 1, true)
+		SetDirection(tview.FlexRow)
 
-	return &ChangeLogView{
+	// Set border and title on the table itself
+	changeTable.SetBorder(true).
+		SetBorderColor(tcell.ColorGray).
+		SetTitle("Change Log (Most Recent First) [Press 'c' to clear]").
+		SetBorderAttributes(tcell.AttrDim)
+
+	// Add the table to the flex with focus enabled
+	changeFlex.AddItem(changeTable, 0, 1, true)
+
+	cv := &ChangeLogView{
 		table: changeTable,
-		box:   changeBox,
 		flex:  changeFlex,
 	}
+
+	// Add input capture for the clear functionality
+	changeTable.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+		if event.Rune() == 'c' {
+			cv.Clear()
+			return nil
+		}
+		return event
+	})
+
+	// Ensure the table starts with a selection
+	changeTable.Select(0, 0)
+
+	return cv
 }
 
 // GetFlex returns the flex container
 func (cv *ChangeLogView) GetFlex() *tview.Flex {
 	return cv.flex
+}
+
+// GetTable returns the underlying table primitive
+func (cv *ChangeLogView) GetTable() *tview.Table {
+	return cv.table
 }
 
 // AddChange adds a new change event to the log
@@ -98,12 +118,10 @@ func (cv *ChangeLogView) AddChange(change ChangeEvent) {
 	cv.table.SetCell(1, 5, tview.NewTableCell(oldValue).SetTextColor(tcell.ColorGray))
 	cv.table.SetCell(1, 6, tview.NewTableCell(newValue).SetTextColor(tcell.ColorWhite))
 
-	// Update box draw function
-	cv.box.SetDrawFunc(func(screen tcell.Screen, x, y, width, height int) (int, int, int, int) {
-		cv.table.SetRect(x+1, y+1, width-2, height-2)
-		cv.table.Draw(screen)
-		return x, y, width, height
-	})
+	// Ensure selection is maintained
+	if row, col := cv.table.GetSelection(); row == 0 && col == 0 {
+		cv.table.Select(1, 0)
+	}
 }
 
 // formatValue formats a value for display in the changelog
@@ -128,4 +146,7 @@ func (cv *ChangeLogView) Clear() {
 			SetAttributes(tcell.AttrBold)
 		cv.table.SetCell(0, i, cell)
 	}
+
+	// Ensure selection is maintained after clearing
+	cv.table.Select(0, 0)
 }

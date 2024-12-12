@@ -48,6 +48,7 @@ func main() {
 
 	// Create changelog view
 	changeLogView := cmd.NewChangeLogView()
+	changeLogTable := changeLogView.GetTable()
 
 	// Create state cache for tracking changes
 	stateCache := cmd.NewStateCache()
@@ -76,9 +77,11 @@ func main() {
 
 	// Create a flex container for the table and changelog
 	mainFlex := tview.NewFlex().
-		SetDirection(tview.FlexRow).
-		AddItem(table, 0, 2, true).
-		AddItem(changeLogView.GetFlex(), 0, 1, false)
+		SetDirection(tview.FlexRow)
+
+	// Add items to mainFlex with proper focus handling
+	mainFlex.AddItem(table, 0, 2, true)
+	mainFlex.AddItem(changeLogView.GetFlex(), 0, 1, false)
 
 	// Create a flex container with padding
 	flex := tview.NewFlex().
@@ -215,6 +218,10 @@ func main() {
 		return x, y, width, height
 	})
 
+	// Track which component has focus
+	focusIndex := 0
+	components := []tview.Primitive{table, changeLogTable}
+
 	// Add keyboard input handler
 	app.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 		if event.Key() == tcell.KeyEscape {
@@ -224,6 +231,19 @@ func main() {
 				app.SetFocus(table)
 				return nil
 			}
+		}
+
+		// Handle Tab key for switching focus between main table and changelog
+		if !showingDetails && event.Key() == tcell.KeyTab {
+			focusIndex = (focusIndex + 1) % len(components)
+			app.SetFocus(components[focusIndex])
+			return nil
+		}
+
+		// If changelog has focus and 'c' is pressed, clear it
+		if !showingDetails && app.GetFocus() == changeLogTable && event.Rune() == 'c' {
+			changeLogView.Clear()
+			return nil
 		}
 
 		if showingDetails {
