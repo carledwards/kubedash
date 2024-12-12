@@ -75,6 +75,10 @@ func main() {
 		SetTitleAlign(tview.AlignCenter).
 		SetBorderAttributes(tcell.AttrDim)
 
+	// Set the application and box in the changelog view for flashing effect
+	changeLogView.SetApplication(app)
+	changeLogView.SetBox(box)
+
 	// Create a flex container for the table and changelog
 	mainFlex := tview.NewFlex().
 		SetDirection(tview.FlexRow)

@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
@@ -11,6 +12,8 @@ import (
 type ChangeLogView struct {
 	table *tview.Table
 	flex  *tview.Flex
+	app   *tview.Application
+	box   *tview.Box
 }
 
 // NewChangeLogView creates a new ChangeLogView instance
@@ -55,6 +58,16 @@ func NewChangeLogView() *ChangeLogView {
 	return cv
 }
 
+// SetApplication sets the tview application instance
+func (cv *ChangeLogView) SetApplication(app *tview.Application) {
+	cv.app = app
+}
+
+// SetBox sets the main box instance
+func (cv *ChangeLogView) SetBox(box *tview.Box) {
+	cv.box = box
+}
+
 // GetFlex returns the flex container
 func (cv *ChangeLogView) GetFlex() *tview.Flex {
 	return cv.flex
@@ -63,6 +76,31 @@ func (cv *ChangeLogView) GetFlex() *tview.Flex {
 // GetTable returns the underlying table primitive
 func (cv *ChangeLogView) GetTable() *tview.Table {
 	return cv.table
+}
+
+// flashTitle creates a flashing effect for the title
+func (cv *ChangeLogView) flashTitle() {
+	if cv.app == nil || cv.box == nil {
+		return
+	}
+
+	originalColor := tcell.ColorGray
+	flashColor := tcell.ColorYellow
+
+	// Flash 3 times
+	go func() {
+		for i := 0; i < 3; i++ {
+			cv.app.QueueUpdateDraw(func() {
+				cv.box.SetBorderColor(flashColor)
+			})
+			time.Sleep(200 * time.Millisecond)
+
+			cv.app.QueueUpdateDraw(func() {
+				cv.box.SetBorderColor(originalColor)
+			})
+			time.Sleep(200 * time.Millisecond)
+		}
+	}()
 }
 
 // AddChange adds a new change event to the log
@@ -94,6 +132,9 @@ func (cv *ChangeLogView) AddChange(change ChangeEvent) {
 
 	// Optional: Ensure focus stays at the top
 	cv.table.Select(1, 0)
+
+	// Trigger title flash
+	cv.flashTitle()
 }
 
 // formatValue formats a value for display in the changelog
