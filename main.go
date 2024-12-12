@@ -224,6 +224,12 @@ func main() {
 
 	// Add keyboard input handler
 	app.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+		// Handle global 'c' key for clearing changelog
+		if !showingDetails && event.Rune() == 'c' {
+			changeLogView.Clear()
+			return nil
+		}
+
 		if event.Key() == tcell.KeyEscape {
 			if showingDetails {
 				showingDetails = false
@@ -237,12 +243,6 @@ func main() {
 		if !showingDetails && event.Key() == tcell.KeyTab {
 			focusIndex = (focusIndex + 1) % len(components)
 			app.SetFocus(components[focusIndex])
-			return nil
-		}
-
-		// If changelog has focus and 'c' is pressed, clear it
-		if !showingDetails && app.GetFocus() == changeLogTable && event.Rune() == 'c' {
-			changeLogView.Clear()
 			return nil
 		}
 

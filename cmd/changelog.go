@@ -49,15 +49,6 @@ func NewChangeLogView() *ChangeLogView {
 		flex:  changeFlex,
 	}
 
-	// Add input capture for the clear functionality
-	changeTable.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
-		if event.Rune() == 'c' {
-			cv.Clear()
-			return nil
-		}
-		return event
-	})
-
 	// Ensure the table starts with a selection
 	changeTable.Select(0, 0)
 
