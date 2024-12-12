@@ -334,10 +334,34 @@ func main() {
 	// Create details view
 	detailsView := cmd.NewNodeDetailsView()
 
+	// Get current context name
+	loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
+	configOverrides := &clientcmd.ConfigOverrides{}
+	kubeConfig := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(loadingRules, configOverrides)
+
+	config, err := kubeConfig.ClientConfig()
+	if err != nil {
+		panic(fmt.Sprintf("Failed to get client config: %v", err))
+	}
+
+	rawConfig, err := kubeConfig.RawConfig()
+	if err != nil {
+		panic(fmt.Sprintf("Failed to get raw config: %v", err))
+	}
+
+	currentContext := rawConfig.CurrentContext
+	contextInfo := rawConfig.Contexts[currentContext]
+	clusterName := contextInfo.Cluster
+	if clusterName == "" {
+		clusterName = currentContext
+	}
+
 	// Create a box to hold everything
 	box := tview.NewBox().
 		SetBorder(true).
 		SetBorderColor(tcell.ColorGray).
+		SetTitle(fmt.Sprintf(" %s ", clusterName)). // Set cluster name as title with padding
+		SetTitleAlign(tview.AlignCenter).           // Center the title
 		SetBorderAttributes(tcell.AttrDim)
 
 	// Create a flex container for the table
@@ -365,17 +389,6 @@ func main() {
 	var isRefreshing atomic.Bool
 
 	fmt.Println("Creating Kubernetes client...")
-
-	// Use the current context from kubectl
-	loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
-	configOverrides := &clientcmd.ConfigOverrides{}
-	kubeConfig := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(loadingRules, configOverrides)
-
-	// Get a rest.Config from the kubeConfig
-	config, err := kubeConfig.ClientConfig()
-	if err != nil {
-		panic(fmt.Sprintf("Failed to get client config: %v", err))
-	}
 
 	// Create clientset
 	clientset, err := kubernetes.NewForConfig(config)
