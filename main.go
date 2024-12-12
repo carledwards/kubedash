@@ -75,6 +75,25 @@ func sortPodIndicators(indicators []string) []string {
 	return result
 }
 
+// formatDuration formats a duration in a human-readable format
+func formatDuration(d time.Duration) string {
+	days := int(d.Hours() / 24)
+	hours := int(d.Hours()) % 24
+
+	if days >= 10 {
+		return fmt.Sprintf("%dd", days)
+	} else if days > 0 {
+		return fmt.Sprintf("%dd%dh", days, hours)
+	}
+
+	if hours > 0 {
+		return fmt.Sprintf("%dh", hours)
+	}
+
+	minutes := int(d.Minutes())
+	return fmt.Sprintf("%dm", minutes)
+}
+
 // updateNodeData updates the table with fresh node and pod data
 func updateNodeData(clientset *kubernetes.Clientset, table *tview.Table, nodeMap map[string]*corev1.Node, includeNamespaces, excludeNamespaces, visibleNamespaces map[string]bool) error {
 	// Store current state
@@ -111,14 +130,21 @@ func updateNodeData(clientset *kubernetes.Clientset, table *tview.Table, nodeMap
 		newNodeMap[node.Name] = &nodeCopy
 		podsByNode[node.Name] = make(nodeNamespacePods)
 
-		// Get node status
-		status := "Not Ready"
+		// Get node status - show the condition type that is not "Ready"
+		status := "Unknown"
 		for _, cond := range node.Status.Conditions {
-			if cond.Type == "Ready" {
-				if cond.Status == "True" {
-					status = "Ready"
-				}
+			if cond.Status == "True" && cond.Type != "Ready" {
+				status = string(cond.Type)
 				break
+			}
+		}
+		// If no other condition is True, use Ready condition
+		if status == "Unknown" {
+			for _, cond := range node.Status.Conditions {
+				if cond.Type == "Ready" {
+					status = string(cond.Type)
+					break
+				}
 			}
 		}
 
@@ -300,25 +326,6 @@ func updateNodeData(clientset *kubernetes.Clientset, table *tview.Table, nodeMap
 	}
 
 	return nil
-}
-
-// formatDuration formats a duration in a human-readable format
-func formatDuration(d time.Duration) string {
-	days := int(d.Hours() / 24)
-	hours := int(d.Hours()) % 24
-
-	if days >= 10 {
-		return fmt.Sprintf("%dd", days)
-	} else if days > 0 {
-		return fmt.Sprintf("%dd%dh", days, hours)
-	}
-
-	if hours > 0 {
-		return fmt.Sprintf("%dh", hours)
-	}
-
-	minutes := int(d.Minutes())
-	return fmt.Sprintf("%dm", minutes)
 }
 
 func main() {
