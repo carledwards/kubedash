@@ -183,9 +183,19 @@ func (p *MockK8sDataProvider) UpdateNodeData(includeNamespaces, excludeNamespace
 
 		nodePods := p.podStates[nodeName]
 		podsByNamespace := make(map[string][]string)
+		filteredPodCount := 0
+		totalPodCount := len(nodePods)
 
 		for podName, podInfo := range nodePods {
 			namespace := strings.Split(podName, "-")[2]
+
+			// Skip if namespace is excluded or not included
+			if excludeNamespaces[namespace] || (len(includeNamespaces) > 0 && !includeNamespaces[namespace]) {
+				continue
+			}
+
+			filteredPodCount++
+
 			indicator := "[green]■[white] "
 			switch podInfo.Status {
 			case "Failed":
@@ -201,14 +211,22 @@ func (p *MockK8sDataProvider) UpdateNodeData(includeNamespaces, excludeNamespace
 		}
 
 		podsByNode[nodeName] = podsByNamespace
+
+		// Only show total if it differs from filtered count
+		podCountDisplay := fmt.Sprintf("%d", filteredPodCount)
+		if filteredPodCount != totalPodCount {
+			podCountDisplay = fmt.Sprintf("%d (%d)", filteredPodCount, totalPodCount)
+		}
+
 		nodeData[nodeName] = NodeData{
 			Name:          nodeName,
 			Status:        "Ready",
 			Version:       "v1.24.0",
-			PodCount:      fmt.Sprintf("%d", len(nodePods)),
+			PodCount:      podCountDisplay,
 			Age:           FormatDuration(time.Since(node.CreationTimestamp.Time)),
-			PodIndicators: fmt.Sprintf("%d pods", len(nodePods)),
+			PodIndicators: strings.Join(podsByNode[nodeName]["default"], ""),
 			Pods:          nodePods,
+			TotalPods:     totalPodCount,
 		}
 	}
 

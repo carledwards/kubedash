@@ -209,7 +209,8 @@ func (p *RealK8sDataProvider) UpdateNodeData(includeNamespaces, excludeNamespace
 		return nil, nil, fmt.Errorf("failed to list pods: %v", err)
 	}
 
-	// Initialize node data structures
+	// Initialize node data structures and total pod counts
+	nodeTotalPods := make(map[string]int)
 	for _, node := range nodes.Items {
 		nodeStatus := "NotReady"
 		for _, condition := range node.Status.Conditions {
@@ -229,12 +230,23 @@ func (p *RealK8sDataProvider) UpdateNodeData(includeNamespaces, excludeNamespace
 			PodCount:      "0",
 			PodIndicators: "",
 			Pods:          make(map[string]PodInfo),
+			TotalPods:     0,
 		}
 		nodeData[node.Name] = data
 		podsByNode[node.Name] = make(map[string][]string)
+		nodeTotalPods[node.Name] = 0
 	}
 
-	// Process pods
+	// First pass: count total pods per node
+	for _, pod := range pods.Items {
+		nodeName := pod.Spec.NodeName
+		if nodeName == "" {
+			continue
+		}
+		nodeTotalPods[nodeName]++
+	}
+
+	// Second pass: process filtered pods and update counts
 	for _, pod := range pods.Items {
 		nodeName := pod.Spec.NodeName
 		if nodeName == "" {
@@ -262,7 +274,15 @@ func (p *RealK8sDataProvider) UpdateNodeData(includeNamespaces, excludeNamespace
 		if data, exists := nodeData[nodeName]; exists {
 			podInfo := getPodInfo(&pod)
 			data.Pods[pod.Name] = podInfo
-			data.PodCount = fmt.Sprintf("%d", len(data.Pods))
+			data.TotalPods = nodeTotalPods[nodeName]
+
+			// Only show total if it differs from filtered count
+			if len(data.Pods) == data.TotalPods {
+				data.PodCount = fmt.Sprintf("%d", len(data.Pods))
+			} else {
+				data.PodCount = fmt.Sprintf("%d (%d)", len(data.Pods), data.TotalPods)
+			}
+
 			data.PodIndicators = strings.Join(podsByNode[nodeName][ns], "")
 			nodeData[nodeName] = data
 		}

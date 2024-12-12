@@ -29,10 +29,11 @@ type NodeData struct {
 	Name          string
 	Status        string
 	Version       string
-	PodCount      string
+	PodCount      string // Will now show as "filtered (total)"
 	Age           string
 	PodIndicators string
 	Pods          map[string]PodInfo // Map of pod name to pod info
+	TotalPods     int                // Track total pods before filtering
 }
 
 // CompareNodeData performs a deep comparison of two NodeData instances
@@ -42,6 +43,7 @@ func CompareNodeData(old, new NodeData) bool {
 		old.Version != new.Version ||
 		old.PodCount != new.PodCount ||
 		old.Age != new.Age ||
+		old.TotalPods != new.TotalPods ||
 		old.PodIndicators != new.PodIndicators {
 		return true
 	}
