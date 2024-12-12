@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 )
@@ -52,7 +53,7 @@ func (p *BaseK8sDataProvider) ProcessNodeData(
 			Name:          node.Name,
 			Status:        nodeStatus,
 			Version:       node.Status.NodeInfo.KubeletVersion,
-			Age:           FormatDuration(node.CreationTimestamp.Time.Sub(node.CreationTimestamp.Time)),
+			Age:           FormatDuration(time.Since(node.CreationTimestamp.Time)),
 			PodCount:      "0",
 			PodIndicators: "",
 			Pods:          make(map[string]PodInfo),

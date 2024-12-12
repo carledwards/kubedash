@@ -396,6 +396,12 @@ func updateTable(table *tview.Table, nodeData map[string]cmd.NodeData, podsByNod
 			SetSelectable(false).
 			SetExpansion(1).
 			SetAttributes(tcell.AttrBold)
+
+		// Right-align Age and PODS columns
+		if header == "Age" || header == "PODS" {
+			cell.SetAlign(tview.AlignRight)
+		}
+
 		table.SetCell(0, i, cell)
 	}
 
@@ -424,16 +430,18 @@ func updateTable(table *tview.Table, nodeData map[string]cmd.NodeData, podsByNod
 			SetExpansion(1))
 		table.SetCell(i, 3, tview.NewTableCell(data.Age).
 			SetTextColor(tcell.ColorSkyblue).
-			SetExpansion(1))
+			SetExpansion(1).
+			SetAlign(tview.AlignRight)) // Right-align Age
 		table.SetCell(i, 4, tview.NewTableCell(data.PodCount).
 			SetTextColor(tcell.ColorSkyblue).
-			SetExpansion(1))
+			SetExpansion(1).
+			SetAlign(tview.AlignRight)) // Right-align PODS
 
 		for nsIdx, namespace := range namespaces {
 			indicators := podsByNode[data.Name][namespace]
 			cell := tview.NewTableCell(strings.Join(indicators, "")).
 				SetExpansion(1).
-				SetAlign(tview.AlignLeft)
+				SetAlign(tview.AlignLeft) // Keep pod indicators left-aligned
 			table.SetCell(i, 5+nsIdx, cell)
 		}
 		i++

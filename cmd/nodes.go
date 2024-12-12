@@ -81,11 +81,13 @@ func CompareNodes(old, new map[string]NodeData) bool {
 // FormatDuration formats a duration in a human-readable format
 func FormatDuration(d time.Duration) string {
 	days := int(d.Hours() / 24)
-	if days > 0 {
+	hours := int(d.Hours()) % 24
+
+	if days >= 10 {
 		return fmt.Sprintf("%dd", days)
-	}
-	hours := int(d.Hours())
-	if hours > 0 {
+	} else if days > 0 {
+		return fmt.Sprintf("%dd%dh", days, hours)
+	} else if hours > 0 {
 		return fmt.Sprintf("%dh", hours)
 	}
 	minutes := int(d.Minutes())
@@ -101,6 +103,12 @@ func SetupNodeTable(table *tview.Table) {
 			SetSelectable(false).
 			SetExpansion(1).
 			SetAttributes(tcell.AttrBold)
+
+		// Right-align Age and PODS columns
+		if header == "Age" || header == "PODS" {
+			cell.SetAlign(tview.AlignRight)
+		}
+
 		table.SetCell(0, i, cell)
 	}
 }
