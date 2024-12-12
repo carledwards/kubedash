@@ -190,7 +190,7 @@ func updateNodeData(clientset *kubernetes.Clientset, table *tview.Table, nodeMap
 		}
 
 		// Calculate node age
-		age := cmd.FormatDuration(time.Since(node.CreationTimestamp.Time))
+		age := formatDuration(time.Since(node.CreationTimestamp.Time))
 
 		// Store new state
 		newState[node.Name] = cmd.NodeData{
@@ -300,6 +300,25 @@ func updateNodeData(clientset *kubernetes.Clientset, table *tview.Table, nodeMap
 	}
 
 	return nil
+}
+
+// formatDuration formats a duration in a human-readable format
+func formatDuration(d time.Duration) string {
+	days := int(d.Hours() / 24)
+	hours := int(d.Hours()) % 24
+
+	if days >= 10 {
+		return fmt.Sprintf("%dd", days)
+	} else if days > 0 {
+		return fmt.Sprintf("%dd%dh", days, hours)
+	}
+
+	if hours > 0 {
+		return fmt.Sprintf("%dh", hours)
+	}
+
+	minutes := int(d.Minutes())
+	return fmt.Sprintf("%dm", minutes)
 }
 
 func main() {
