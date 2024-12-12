@@ -41,12 +41,11 @@ func updateNodeData(clientset *kubernetes.Clientset, table *tview.Table, nodeMap
 	for row := 1; row < table.GetRowCount(); row++ {
 		name := table.GetCell(row, 0).Text
 		oldState[name] = cmd.NodeData{
-			Name:          name,
-			Status:        table.GetCell(row, 1).Text,
-			Version:       table.GetCell(row, 2).Text,
-			PodCount:      table.GetCell(row, 3).Text,
-			Age:           table.GetCell(row, 4).Text,
-			PodIndicators: table.GetCell(row, 5).Text,
+			Name:     name,
+			Status:   table.GetCell(row, 1).Text,
+			Version:  table.GetCell(row, 2).Text,
+			PodCount: table.GetCell(row, 3).Text,
+			Age:      table.GetCell(row, 4).Text,
 		}
 	}
 
@@ -61,10 +60,15 @@ func updateNodeData(clientset *kubernetes.Clientset, table *tview.Table, nodeMap
 	newNodeMap := make(map[string]*corev1.Node)
 	newVisibleNamespaces := make(map[string]bool)
 
+	// Track pod indicators by namespace for each node
+	type nodeNamespacePods map[string][]string // namespace -> pod indicators
+	podsByNode := make(map[string]nodeNamespacePods)
+
 	// Process nodes
 	for _, node := range nodes.Items {
 		nodeCopy := node
 		newNodeMap[node.Name] = &nodeCopy
+		podsByNode[node.Name] = make(nodeNamespacePods)
 
 		// Get node status
 		status := "Not Ready"
@@ -88,7 +92,7 @@ func updateNodeData(clientset *kubernetes.Clientset, table *tview.Table, nodeMap
 		// Count total and filtered pods
 		totalPods := len(pods.Items)
 		filteredPods := 0
-		var podIndicators []string
+
 		for _, pod := range pods.Items {
 			// Skip if namespace is excluded
 			if excludeNamespaces[pod.Namespace] {
@@ -110,12 +114,17 @@ func updateNodeData(clientset *kubernetes.Clientset, table *tview.Table, nodeMap
 				restarts += containerStatus.RestartCount
 			}
 
-			// Color based on restarts with consistent spacing
-			if restarts == 0 {
-				podIndicators = append(podIndicators, "[green]■[white] ")
-			} else {
-				podIndicators = append(podIndicators, "[yellow]■[white] ")
+			// Create pod indicator
+			indicator := "[green]■[white] "
+			if restarts > 0 {
+				indicator = "[yellow]■[white] "
 			}
+
+			// Add indicator to namespace group
+			if podsByNode[node.Name][pod.Namespace] == nil {
+				podsByNode[node.Name][pod.Namespace] = make([]string, 0)
+			}
+			podsByNode[node.Name][pod.Namespace] = append(podsByNode[node.Name][pod.Namespace], indicator)
 		}
 
 		// Format pod count string
@@ -129,25 +138,50 @@ func updateNodeData(clientset *kubernetes.Clientset, table *tview.Table, nodeMap
 
 		// Store new state
 		newState[node.Name] = cmd.NodeData{
-			Name:          node.Name,
-			Status:        status,
-			Version:       node.Status.NodeInfo.KubeletVersion,
-			PodCount:      podCountStr,
-			Age:           age,
-			PodIndicators: strings.Join(podIndicators, ""),
+			Name:     node.Name,
+			Status:   status,
+			Version:  node.Status.NodeInfo.KubeletVersion,
+			PodCount: podCountStr,
+			Age:      age,
 		}
-	}
-
-	// Check if there are any changes
-	if !cmd.CompareNodes(oldState, newState) {
-		return nil // No changes, don't update display
 	}
 
 	// Clear existing data but preserve headers
 	table.Clear()
 
-	// Re-add headers
-	cmd.SetupNodeTable(table)
+	// Create headers
+	headers := []string{"Node Name", "Status", "Version", "PODS", "Age"}
+
+	// Add namespace columns for allowed namespaces
+	var namespaces []string
+	if len(includeNamespaces) > 0 {
+		// Use explicitly included namespaces
+		for ns := range includeNamespaces {
+			namespaces = append(namespaces, ns)
+		}
+	} else {
+		// Use visible namespaces excluding any excluded ones
+		for ns := range newVisibleNamespaces {
+			if !excludeNamespaces[ns] {
+				namespaces = append(namespaces, ns)
+			}
+		}
+	}
+	// Sort namespaces for consistent column order
+	sort.Strings(namespaces)
+
+	// Add namespace headers
+	headers = append(headers, namespaces...)
+
+	// Set up headers
+	for i, header := range headers {
+		cell := tview.NewTableCell(header).
+			SetTextColor(tcell.ColorWhite).
+			SetSelectable(false).
+			SetExpansion(1).
+			SetAttributes(tcell.AttrBold)
+		table.SetCell(0, i, cell)
+	}
 
 	// Update node map
 	for k := range nodeMap {
@@ -168,6 +202,7 @@ func updateNodeData(clientset *kubernetes.Clientset, table *tview.Table, nodeMap
 	// Add nodes to table
 	i := 1
 	for _, data := range newState {
+		// Basic node info
 		table.SetCell(i, 0, tview.NewTableCell(data.Name).
 			SetTextColor(tcell.ColorSkyblue).
 			SetExpansion(1))
@@ -188,9 +223,15 @@ func updateNodeData(clientset *kubernetes.Clientset, table *tview.Table, nodeMap
 		table.SetCell(i, 4, tview.NewTableCell(data.Age).
 			SetTextColor(tcell.ColorSkyblue).
 			SetExpansion(1))
-		table.SetCell(i, 5, tview.NewTableCell(data.PodIndicators).
-			SetExpansion(1).
-			SetAlign(tview.AlignLeft))
+
+		// Add namespace columns
+		for nsIdx, namespace := range namespaces {
+			indicators := podsByNode[data.Name][namespace]
+			cell := tview.NewTableCell(strings.Join(indicators, "")).
+				SetExpansion(1).
+				SetAlign(tview.AlignLeft)
+			table.SetCell(i, 5+nsIdx, cell)
+		}
 		i++
 	}
 
@@ -333,17 +374,6 @@ func main() {
 		// Calculate the available space for the table
 		tableWidth := width - 2   // Account for borders
 		tableHeight := height - 2 // Account for borders
-
-		// Convert visible namespaces map to sorted slice
-		var nsSlice []string
-		for ns := range nodeView.GetVisibleNamespaces() {
-			nsSlice = append(nsSlice, ns)
-		}
-		sort.Strings(nsSlice)
-
-		// Draw the namespaces on the bottom border with space at start and end
-		namespaceList := " " + strings.Join(nsSlice, ", ") + " "
-		tview.Print(screen, namespaceList, x+1, y+height-1, tableWidth, tview.AlignLeft, tcell.ColorYellow)
 
 		// Draw spinner in top right if refreshing
 		if isRefreshing.Load() {
