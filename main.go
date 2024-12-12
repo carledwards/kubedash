@@ -16,10 +16,12 @@ import (
 func main() {
 	fmt.Println("Starting application...")
 
-	// Define namespace flags
+	// Define flags
 	var namespaces []string
+	var useMockData bool
 	flag.Var((*cmd.ArrayFlags)(&namespaces), "N", "Filter by namespace (can be specified multiple times or comma-separated, prefix with - to exclude)")
 	flag.Var((*cmd.ArrayFlags)(&namespaces), "namespace", "Filter by namespace (can be specified multiple times or comma-separated, prefix with - to exclude)")
+	flag.BoolVar(&useMockData, "mock-k8s-data", false, "Use mock Kubernetes data instead of real cluster")
 	flag.Parse()
 
 	// Create maps for included and excluded namespaces
@@ -45,20 +47,26 @@ func main() {
 	// Create details view
 	detailsView := cmd.NewNodeDetailsView()
 
-	fmt.Println("Creating Kubernetes client...")
+	fmt.Println("Creating data provider...")
 
-	// Create Kubernetes client
-	kubeClient, clusterName, err := cmd.NewKubeClient()
-	if err != nil {
-		panic(err)
+	// Create data provider based on flag
+	var dataProvider cmd.K8sDataProvider
+	var err error
+	if useMockData {
+		dataProvider = cmd.NewMockK8sDataProvider()
+	} else {
+		dataProvider, err = cmd.NewRealK8sDataProvider()
+		if err != nil {
+			panic(err)
+		}
 	}
 
 	// Create a box to hold everything
 	box := tview.NewBox().
 		SetBorder(true).
 		SetBorderColor(tcell.ColorGray).
-		SetTitle(fmt.Sprintf(" %s ", clusterName)). // Set cluster name as title with padding
-		SetTitleAlign(tview.AlignCenter).           // Center the title
+		SetTitle(fmt.Sprintf(" %s ", dataProvider.GetClusterName())). // Set cluster name as title with padding
+		SetTitleAlign(tview.AlignCenter).                             // Center the title
 		SetBorderAttributes(tcell.AttrDim)
 
 	// Create a flex container for the table
@@ -85,12 +93,17 @@ func main() {
 	var spinnerIndex atomic.Int32
 	var isRefreshing atomic.Bool
 
-	fmt.Println("Fetching nodes...")
+	fmt.Println("Fetching initial data...")
 
 	// Initial data load
-	nodeData, podsByNode, err := cmd.UpdateNodeData(kubeClient.Clientset, nodeView.GetNodeMap(), includeNamespaces, excludeNamespaces)
+	nodeData, podsByNode, err := dataProvider.UpdateNodeData(includeNamespaces, excludeNamespaces)
 	if err != nil {
 		panic(err)
+	}
+
+	// Update nodeView's map with the provider's map
+	for k, v := range dataProvider.GetNodeMap() {
+		nodeView.GetNodeMap()[k] = v
 	}
 
 	// Update table with initial data
@@ -112,7 +125,7 @@ func main() {
 
 				// Update data in background
 				go func() {
-					nodeData, podsByNode, err := cmd.UpdateNodeData(kubeClient.Clientset, nodeView.GetNodeMap(), includeNamespaces, excludeNamespaces)
+					nodeData, podsByNode, err := dataProvider.UpdateNodeData(includeNamespaces, excludeNamespaces)
 					if err != nil {
 						// Log error but don't crash
 						fmt.Printf("Error updating data: %v\n", err)
@@ -120,6 +133,14 @@ func main() {
 					}
 
 					app.QueueUpdateDraw(func() {
+						// Update nodeView's map with the provider's map
+						for k := range nodeView.GetNodeMap() {
+							delete(nodeView.GetNodeMap(), k)
+						}
+						for k, v := range dataProvider.GetNodeMap() {
+							nodeView.GetNodeMap()[k] = v
+						}
+
 						updateTable(table, nodeData, podsByNode)
 						// Restore previous selection if it's still valid
 						if currentRow < table.GetRowCount() {
