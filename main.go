@@ -199,9 +199,17 @@ func updateNodeData(clientset *kubernetes.Clientset, table *tview.Table, nodeMap
 		visibleNamespaces[k] = true
 	}
 
-	// Add nodes to table
+	// Create a sorted slice of node names
+	var nodeNames []string
+	for name := range newState {
+		nodeNames = append(nodeNames, name)
+	}
+	sort.Strings(nodeNames)
+
+	// Add nodes to table in alphabetical order
 	i := 1
-	for _, data := range newState {
+	for _, nodeName := range nodeNames {
+		data := newState[nodeName]
 		// Basic node info
 		table.SetCell(i, 0, tview.NewTableCell(data.Name).
 			SetTextColor(tcell.ColorSkyblue).
