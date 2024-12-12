@@ -414,6 +414,9 @@ func main() {
 				isRefreshing.Store(true)
 				app.QueueUpdateDraw(func() {}) // Force initial draw
 
+				// Store current selection
+				currentRow, currentCol := table.GetSelection()
+
 				// Update data in background
 				go func() {
 					if err := updateNodeData(clientset, table, nodeView.GetNodeMap(), includeNamespaces, excludeNamespaces, nodeView.GetVisibleNamespaces()); err != nil {
@@ -422,9 +425,12 @@ func main() {
 					}
 
 					app.QueueUpdateDraw(func() {
-						// Restore selection after update
-						if table.GetRowCount() > 1 {
-							table.Select(1, 0)
+						// Restore previous selection if it's still valid
+						if currentRow < table.GetRowCount() {
+							table.Select(currentRow, currentCol)
+						} else if table.GetRowCount() > 1 {
+							// If the previous row no longer exists, select the last row
+							table.Select(table.GetRowCount()-1, currentCol)
 						}
 						isRefreshing.Store(false)
 					})
