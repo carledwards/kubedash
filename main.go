@@ -71,7 +71,7 @@ func main() {
 	box := tview.NewBox().
 		SetBorder(true).
 		SetBorderColor(tcell.ColorGray).
-		SetTitle(fmt.Sprintf(" %s [Press 'r' to refresh, 'c' to clear log] ", dataProvider.GetClusterName())).
+		SetTitle(fmt.Sprintf(" %s ", dataProvider.GetClusterName())).
 		SetTitleAlign(tview.AlignCenter).
 		SetBorderAttributes(tcell.AttrDim)
 
