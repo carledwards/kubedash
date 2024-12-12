@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"k8s-nodes-example/cmd"
 	"sort"
 	"strings"
 	"sync/atomic"
@@ -33,77 +34,13 @@ func (i *arrayFlags) Set(value string) error {
 	return nil
 }
 
-// nodeData represents the state of a node and its pods
-type nodeData struct {
-	Name          string
-	Status        string
-	Version       string
-	PodCount      string
-	Age           string
-	PodIndicators string
-}
-
-// compareNodes checks if two node states are different
-func compareNodes(old, new map[string]nodeData) bool {
-	if len(old) != len(new) {
-		return true
-	}
-	for name, oldData := range old {
-		if newData, exists := new[name]; !exists {
-			return true
-		} else if oldData != newData {
-			return true
-		}
-	}
-	return false
-}
-
-// formatDuration formats a duration in a human-readable format
-func formatDuration(d time.Duration) string {
-	days := int(d.Hours() / 24)
-	if days > 0 {
-		return fmt.Sprintf("%dd", days)
-	}
-	hours := int(d.Hours())
-	if hours > 0 {
-		return fmt.Sprintf("%dh", hours)
-	}
-	minutes := int(d.Minutes())
-	return fmt.Sprintf("%dm", minutes)
-}
-
-// Helper function to format map as table rows
-func formatMapAsRows(table *tview.Table, startRow int, title string, m map[string]string) int {
-	if len(m) == 0 {
-		table.SetCell(startRow, 0, tview.NewTableCell(title).SetTextColor(tcell.ColorYellow))
-		table.SetCell(startRow, 1, tview.NewTableCell("None").SetTextColor(tcell.ColorWhite))
-		return startRow + 1
-	}
-
-	table.SetCell(startRow, 0, tview.NewTableCell(title).SetTextColor(tcell.ColorYellow))
-	startRow++
-
-	var keys []string
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-
-	for _, k := range keys {
-		table.SetCell(startRow, 0, tview.NewTableCell("  "+k).SetTextColor(tcell.ColorSkyblue))
-		table.SetCell(startRow, 1, tview.NewTableCell(m[k]).SetTextColor(tcell.ColorWhite))
-		startRow++
-	}
-	return startRow
-}
-
 // updateNodeData updates the table with fresh node and pod data
 func updateNodeData(clientset *kubernetes.Clientset, table *tview.Table, nodeMap map[string]*corev1.Node, includeNamespaces, excludeNamespaces, visibleNamespaces map[string]bool) error {
 	// Store current state
-	oldState := make(map[string]nodeData)
+	oldState := make(map[string]cmd.NodeData)
 	for row := 1; row < table.GetRowCount(); row++ {
 		name := table.GetCell(row, 0).Text
-		oldState[name] = nodeData{
+		oldState[name] = cmd.NodeData{
 			Name:          name,
 			Status:        table.GetCell(row, 1).Text,
 			Version:       table.GetCell(row, 2).Text,
@@ -120,7 +57,7 @@ func updateNodeData(clientset *kubernetes.Clientset, table *tview.Table, nodeMap
 	}
 
 	// Build new state
-	newState := make(map[string]nodeData)
+	newState := make(map[string]cmd.NodeData)
 	newNodeMap := make(map[string]*corev1.Node)
 	newVisibleNamespaces := make(map[string]bool)
 
@@ -188,10 +125,10 @@ func updateNodeData(clientset *kubernetes.Clientset, table *tview.Table, nodeMap
 		}
 
 		// Calculate node age
-		age := formatDuration(time.Since(node.CreationTimestamp.Time))
+		age := cmd.FormatDuration(time.Since(node.CreationTimestamp.Time))
 
 		// Store new state
-		newState[node.Name] = nodeData{
+		newState[node.Name] = cmd.NodeData{
 			Name:          node.Name,
 			Status:        status,
 			Version:       node.Status.NodeInfo.KubeletVersion,
@@ -202,7 +139,7 @@ func updateNodeData(clientset *kubernetes.Clientset, table *tview.Table, nodeMap
 	}
 
 	// Check if there are any changes
-	if !compareNodes(oldState, newState) {
+	if !cmd.CompareNodes(oldState, newState) {
 		return nil // No changes, don't update display
 	}
 
@@ -210,15 +147,7 @@ func updateNodeData(clientset *kubernetes.Clientset, table *tview.Table, nodeMap
 	table.Clear()
 
 	// Re-add headers
-	headers := []string{"Node Name", "Status", "Version", "PODS", "Age", "Pods"}
-	for i, header := range headers {
-		cell := tview.NewTableCell(header).
-			SetTextColor(tcell.ColorWhite).
-			SetSelectable(false).
-			SetExpansion(1).
-			SetAttributes(tcell.AttrBold)
-		table.SetCell(0, i, cell)
-	}
+	cmd.SetupNodeTable(table)
 
 	// Update node map
 	for k := range nodeMap {
@@ -280,7 +209,6 @@ func main() {
 	// Create maps for included and excluded namespaces
 	includeNamespaces := make(map[string]bool)
 	excludeNamespaces := make(map[string]bool)
-	visibleNamespaces := make(map[string]bool) // Track all visible namespaces
 
 	for _, ns := range namespaces {
 		if strings.HasPrefix(ns, "-") {
@@ -295,70 +223,11 @@ func main() {
 	app := tview.NewApplication()
 
 	// Create main table
-	table := tview.NewTable().
-		SetFixed(1, 0).   // Fix the header row
-		SetBorders(false) // No cell borders
+	nodeView := cmd.NewNodeView(includeNamespaces, excludeNamespaces)
+	table := nodeView.GetTable()
 
-	// Create details table with scrolling support
-	detailsTable := tview.NewTable().
-		SetBorders(false).
-		SetSelectable(true, false) // Enable vertical selection for scrolling
-
-	// Create a box for details table
-	detailsBox := tview.NewBox().
-		SetBorder(true).
-		SetBorderColor(tcell.ColorGray).
-		SetTitle("Node Details (Use mouse wheel or arrow keys to scroll)").
-		SetBorderAttributes(tcell.AttrDim)
-
-	// Enable table selection and set selection style
-	table.SetSelectable(true, true).
-		SetSelectedStyle(tcell.StyleDefault.
-			Background(tcell.ColorNavy).
-			Foreground(tcell.ColorWhite))
-
-	// Add headers
-	headers := []string{"Node Name", "Status", "Version", "PODS", "Age", "Pods"}
-	for i, header := range headers {
-		cell := tview.NewTableCell(header).
-			SetTextColor(tcell.ColorWhite).
-			SetSelectable(false).
-			SetExpansion(1).
-			SetAttributes(tcell.AttrBold)
-		table.SetCell(0, i, cell)
-	}
-
-	fmt.Println("Creating Kubernetes client...")
-
-	// Use the current context from kubectl
-	loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
-	configOverrides := &clientcmd.ConfigOverrides{}
-	kubeConfig := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(loadingRules, configOverrides)
-
-	// Get a rest.Config from the kubeConfig
-	config, err := kubeConfig.ClientConfig()
-	if err != nil {
-		panic(fmt.Sprintf("Failed to get client config: %v", err))
-	}
-
-	// Create clientset
-	clientset, err := kubernetes.NewForConfig(config)
-	if err != nil {
-		panic(err)
-	}
-
-	fmt.Println("Fetching nodes...")
-
-	// Store nodes for lookup
-	nodeMap := make(map[string]*corev1.Node)
-
-	// Initial data load
-	if err := updateNodeData(clientset, table, nodeMap, includeNamespaces, excludeNamespaces, visibleNamespaces); err != nil {
-		panic(err)
-	}
-
-	// Set initial selection
-	table.Select(1, 0)
+	// Create details view
+	detailsView := cmd.NewNodeDetailsView()
 
 	// Create a box to hold everything
 	box := tview.NewBox().
@@ -382,17 +251,6 @@ func main() {
 			AddItem(nil, 1, 1, false), // Right padding
 			0, 1, true)
 
-	// Create a flex container for details
-	detailsFlex := tview.NewFlex().
-		SetDirection(tview.FlexRow).
-		AddItem(nil, 1, 1, false). // Top padding
-		AddItem(tview.NewFlex().
-			SetDirection(tview.FlexColumn).
-			AddItem(nil, 1, 1, false). // Left padding
-			AddItem(detailsBox, 0, 1, true).
-			AddItem(nil, 1, 1, false), // Right padding
-			0, 1, true)
-
 	// Track if we're showing details view
 	showingDetails := false
 
@@ -400,6 +258,35 @@ func main() {
 	spinnerChars := []rune{'-', '\\', '|', '/'}
 	var spinnerIndex atomic.Int32
 	var isRefreshing atomic.Bool
+
+	fmt.Println("Creating Kubernetes client...")
+
+	// Use the current context from kubectl
+	loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
+	configOverrides := &clientcmd.ConfigOverrides{}
+	kubeConfig := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(loadingRules, configOverrides)
+
+	// Get a rest.Config from the kubeConfig
+	config, err := kubeConfig.ClientConfig()
+	if err != nil {
+		panic(fmt.Sprintf("Failed to get client config: %v", err))
+	}
+
+	// Create clientset
+	clientset, err := kubernetes.NewForConfig(config)
+	if err != nil {
+		panic(err)
+	}
+
+	fmt.Println("Fetching nodes...")
+
+	// Initial data load
+	if err := updateNodeData(clientset, table, nodeView.GetNodeMap(), includeNamespaces, excludeNamespaces, nodeView.GetVisibleNamespaces()); err != nil {
+		panic(err)
+	}
+
+	// Set initial selection
+	table.Select(1, 0)
 
 	// Set up auto-refresh ticker
 	ticker := time.NewTicker(10 * time.Second)
@@ -411,7 +298,7 @@ func main() {
 
 				// Update data in background
 				go func() {
-					if err := updateNodeData(clientset, table, nodeMap, includeNamespaces, excludeNamespaces, visibleNamespaces); err != nil {
+					if err := updateNodeData(clientset, table, nodeView.GetNodeMap(), includeNamespaces, excludeNamespaces, nodeView.GetVisibleNamespaces()); err != nil {
 						// Log error but don't crash
 						fmt.Printf("Error updating data: %v\n", err)
 					}
@@ -449,7 +336,7 @@ func main() {
 
 		// Convert visible namespaces map to sorted slice
 		var nsSlice []string
-		for ns := range visibleNamespaces {
+		for ns := range nodeView.GetVisibleNamespaces() {
 			nsSlice = append(nsSlice, ns)
 		}
 		sort.Strings(nsSlice)
@@ -486,16 +373,16 @@ func main() {
 
 		// Handle scrolling in details view
 		if showingDetails {
-			row, _ := detailsTable.GetSelection()
+			row, _ := detailsView.GetTable().GetSelection()
 			switch event.Key() {
 			case tcell.KeyUp:
 				if row > 0 {
-					detailsTable.Select(row-1, 0)
+					detailsView.GetTable().Select(row-1, 0)
 				}
 				return nil
 			case tcell.KeyDown:
-				if row < detailsTable.GetRowCount()-1 {
-					detailsTable.Select(row+1, 0)
+				if row < detailsView.GetTable().GetRowCount()-1 {
+					detailsView.GetTable().Select(row+1, 0)
 				}
 				return nil
 			case tcell.KeyPgUp:
@@ -503,20 +390,20 @@ func main() {
 				if newRow < 0 {
 					newRow = 0
 				}
-				detailsTable.Select(newRow, 0)
+				detailsView.GetTable().Select(newRow, 0)
 				return nil
 			case tcell.KeyPgDn:
 				newRow := row + 10
-				if newRow >= detailsTable.GetRowCount() {
-					newRow = detailsTable.GetRowCount() - 1
+				if newRow >= detailsView.GetTable().GetRowCount() {
+					newRow = detailsView.GetTable().GetRowCount() - 1
 				}
-				detailsTable.Select(newRow, 0)
+				detailsView.GetTable().Select(newRow, 0)
 				return nil
 			case tcell.KeyHome:
-				detailsTable.Select(0, 0)
+				detailsView.GetTable().Select(0, 0)
 				return nil
 			case tcell.KeyEnd:
-				detailsTable.Select(detailsTable.GetRowCount()-1, 0)
+				detailsView.GetTable().Select(detailsView.GetTable().GetRowCount()-1, 0)
 				return nil
 			}
 		}
@@ -548,82 +435,11 @@ func main() {
 			case tcell.KeyEnter:
 				// Get selected node name
 				nodeName := table.GetCell(row, 0).Text
-				if node, ok := nodeMap[nodeName]; ok {
-					// Clear and setup details table
-					detailsTable.Clear()
-
-					// Basic Info
-					row := 0
-					detailsTable.SetCell(row, 0, tview.NewTableCell("Basic Information").SetTextColor(tcell.ColorYellow).SetAttributes(tcell.AttrBold))
-					row++
-					detailsTable.SetCell(row, 0, tview.NewTableCell("Name").SetTextColor(tcell.ColorSkyblue))
-					detailsTable.SetCell(row, 1, tview.NewTableCell(node.Name).SetTextColor(tcell.ColorWhite))
-					row++
-					detailsTable.SetCell(row, 0, tview.NewTableCell("Creation Time").SetTextColor(tcell.ColorSkyblue))
-					detailsTable.SetCell(row, 1, tview.NewTableCell(node.CreationTimestamp.Format(time.RFC3339)).SetTextColor(tcell.ColorWhite))
-					row++
-
-					// System Info
-					row++
-					detailsTable.SetCell(row, 0, tview.NewTableCell("System Information").SetTextColor(tcell.ColorYellow).SetAttributes(tcell.AttrBold))
-					row++
-					detailsTable.SetCell(row, 0, tview.NewTableCell("Machine ID").SetTextColor(tcell.ColorSkyblue))
-					detailsTable.SetCell(row, 1, tview.NewTableCell(node.Status.NodeInfo.MachineID).SetTextColor(tcell.ColorWhite))
-					row++
-					detailsTable.SetCell(row, 0, tview.NewTableCell("System UUID").SetTextColor(tcell.ColorSkyblue))
-					detailsTable.SetCell(row, 1, tview.NewTableCell(node.Status.NodeInfo.SystemUUID).SetTextColor(tcell.ColorWhite))
-					row++
-					detailsTable.SetCell(row, 0, tview.NewTableCell("Boot ID").SetTextColor(tcell.ColorSkyblue))
-					detailsTable.SetCell(row, 1, tview.NewTableCell(node.Status.NodeInfo.BootID).SetTextColor(tcell.ColorWhite))
-					row++
-
-					// Version Info
-					row++
-					detailsTable.SetCell(row, 0, tview.NewTableCell("Version Information").SetTextColor(tcell.ColorYellow).SetAttributes(tcell.AttrBold))
-					row++
-					detailsTable.SetCell(row, 0, tview.NewTableCell("Kernel Version").SetTextColor(tcell.ColorSkyblue))
-					detailsTable.SetCell(row, 1, tview.NewTableCell(node.Status.NodeInfo.KernelVersion).SetTextColor(tcell.ColorWhite))
-					row++
-					detailsTable.SetCell(row, 0, tview.NewTableCell("OS Image").SetTextColor(tcell.ColorSkyblue))
-					detailsTable.SetCell(row, 1, tview.NewTableCell(node.Status.NodeInfo.OSImage).SetTextColor(tcell.ColorWhite))
-					row++
-					detailsTable.SetCell(row, 0, tview.NewTableCell("Container Runtime").SetTextColor(tcell.ColorSkyblue))
-					detailsTable.SetCell(row, 1, tview.NewTableCell(node.Status.NodeInfo.ContainerRuntimeVersion).SetTextColor(tcell.ColorWhite))
-					row++
-					detailsTable.SetCell(row, 0, tview.NewTableCell("Architecture").SetTextColor(tcell.ColorSkyblue))
-					detailsTable.SetCell(row, 1, tview.NewTableCell(node.Status.NodeInfo.Architecture).SetTextColor(tcell.ColorWhite))
-					row++
-
-					// Resource Info
-					row++
-					detailsTable.SetCell(row, 0, tview.NewTableCell("Resource Information").SetTextColor(tcell.ColorYellow).SetAttributes(tcell.AttrBold))
-					row++
-					detailsTable.SetCell(row, 0, tview.NewTableCell("CPU").SetTextColor(tcell.ColorSkyblue))
-					detailsTable.SetCell(row, 1, tview.NewTableCell(node.Status.Capacity.Cpu().String()).SetTextColor(tcell.ColorWhite))
-					row++
-					detailsTable.SetCell(row, 0, tview.NewTableCell("Memory").SetTextColor(tcell.ColorSkyblue))
-					detailsTable.SetCell(row, 1, tview.NewTableCell(node.Status.Capacity.Memory().String()).SetTextColor(tcell.ColorWhite))
-					row++
-
-					// Labels and Annotations
-					row++
-					row = formatMapAsRows(detailsTable, row, "Labels", node.Labels)
-					row++
-					row = formatMapAsRows(detailsTable, row, "Annotations", node.Annotations)
-
-					// Set initial selection for scrolling
-					detailsTable.Select(0, 0)
-
-					// Update details box
-					detailsBox.SetDrawFunc(func(screen tcell.Screen, x, y, width, height int) (int, int, int, int) {
-						detailsTable.SetRect(x+1, y+1, width-2, height-2)
-						detailsTable.Draw(screen)
-						return x, y, width, height
-					})
-
+				if node, ok := nodeView.GetNodeMap()[nodeName]; ok {
+					detailsView.ShowNodeDetails(node)
 					showingDetails = true
-					app.SetRoot(detailsFlex, true)
-					app.SetFocus(detailsTable)
+					app.SetRoot(detailsView.GetFlex(), true)
+					app.SetFocus(detailsView.GetTable())
 					return nil
 				}
 			}
@@ -634,16 +450,16 @@ func main() {
 	// Handle mouse wheel events for scrolling
 	app.SetMouseCapture(func(event *tcell.EventMouse, action tview.MouseAction) (*tcell.EventMouse, tview.MouseAction) {
 		if showingDetails && action == tview.MouseScrollUp {
-			row, _ := detailsTable.GetSelection()
+			row, _ := detailsView.GetTable().GetSelection()
 			if row > 0 {
-				detailsTable.Select(row-1, 0)
+				detailsView.GetTable().Select(row-1, 0)
 			}
 			return nil, 0
 		}
 		if showingDetails && action == tview.MouseScrollDown {
-			row, _ := detailsTable.GetSelection()
-			if row < detailsTable.GetRowCount()-1 {
-				detailsTable.Select(row+1, 0)
+			row, _ := detailsView.GetTable().GetSelection()
+			if row < detailsView.GetTable().GetRowCount()-1 {
+				detailsView.GetTable().Select(row+1, 0)
 			}
 			return nil, 0
 		}
@@ -658,7 +474,7 @@ func main() {
 		if !showingDetails {
 			flex.SetRect(0, 0, width, height)
 		} else {
-			detailsFlex.SetRect(0, 0, width, height)
+			detailsView.GetFlex().SetRect(0, 0, width, height)
 		}
 		return false // Let the application draw normally
 	})
