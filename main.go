@@ -34,6 +34,47 @@ func (i *arrayFlags) Set(value string) error {
 	return nil
 }
 
+// podIndicator represents a pod's status indicator with color information
+type podIndicator struct {
+	color string // "red", "yellow", or "green"
+	text  string // The full indicator text including color codes
+}
+
+// sortPodIndicators sorts pod indicators by color (RED, YELLOW, GREEN)
+func sortPodIndicators(indicators []string) []string {
+	// Convert string indicators to podIndicator structs
+	podIndicators := make([]podIndicator, len(indicators))
+	for i, ind := range indicators {
+		var color string
+		if strings.Contains(ind, "[red]") {
+			color = "red"
+		} else if strings.Contains(ind, "[yellow]") {
+			color = "yellow"
+		} else {
+			color = "green"
+		}
+		podIndicators[i] = podIndicator{color: color, text: ind}
+	}
+
+	// Sort by color
+	sort.Slice(podIndicators, func(i, j int) bool {
+		// Define color priority (red = 0, yellow = 1, green = 2)
+		colorPriority := map[string]int{
+			"red":    0,
+			"yellow": 1,
+			"green":  2,
+		}
+		return colorPriority[podIndicators[i].color] < colorPriority[podIndicators[j].color]
+	})
+
+	// Convert back to strings
+	result := make([]string, len(podIndicators))
+	for i, ind := range podIndicators {
+		result[i] = ind.text
+	}
+	return result
+}
+
 // updateNodeData updates the table with fresh node and pod data
 func updateNodeData(clientset *kubernetes.Clientset, table *tview.Table, nodeMap map[string]*corev1.Node, includeNamespaces, excludeNamespaces, visibleNamespaces map[string]bool) error {
 	// Store current state
@@ -93,6 +134,9 @@ func updateNodeData(clientset *kubernetes.Clientset, table *tview.Table, nodeMap
 		totalPods := len(pods.Items)
 		filteredPods := 0
 
+		// Create a map to store pod indicators by namespace
+		podNamesByNamespace := make(map[string][]string)
+
 		for _, pod := range pods.Items {
 			// Skip if namespace is excluded
 			if excludeNamespaces[pod.Namespace] {
@@ -108,23 +152,35 @@ func updateNodeData(clientset *kubernetes.Clientset, table *tview.Table, nodeMap
 			// Add namespace to visible set
 			newVisibleNamespaces[pod.Namespace] = true
 
-			// Check pod restarts
+			// Check pod status and restarts
+			var indicator string
 			var restarts int32
 			for _, containerStatus := range pod.Status.ContainerStatuses {
 				restarts += containerStatus.RestartCount
 			}
 
-			// Create pod indicator
-			indicator := "[green]■[white] "
-			if restarts > 0 {
+			// Create pod indicator based on status
+			if pod.Status.Phase == "Failed" {
+				indicator = "[red]■[white] "
+			} else if restarts > 0 {
 				indicator = "[yellow]■[white] "
+			} else {
+				indicator = "[green]■[white] "
 			}
 
-			// Add indicator to namespace group
-			if podsByNode[node.Name][pod.Namespace] == nil {
-				podsByNode[node.Name][pod.Namespace] = make([]string, 0)
+			// Initialize slice if needed
+			if podNamesByNamespace[pod.Namespace] == nil {
+				podNamesByNamespace[pod.Namespace] = make([]string, 0)
 			}
-			podsByNode[node.Name][pod.Namespace] = append(podsByNode[node.Name][pod.Namespace], indicator)
+			// Add pod indicator to the slice
+			podNamesByNamespace[pod.Namespace] = append(podNamesByNamespace[pod.Namespace], indicator)
+		}
+
+		// Sort and store pod indicators for each namespace
+		for ns, indicators := range podNamesByNamespace {
+			// Sort indicators by color (RED, YELLOW, GREEN)
+			sortedIndicators := sortPodIndicators(indicators)
+			podsByNode[node.Name][ns] = sortedIndicators
 		}
 
 		// Format pod count string
@@ -150,7 +206,7 @@ func updateNodeData(clientset *kubernetes.Clientset, table *tview.Table, nodeMap
 	table.Clear()
 
 	// Create headers
-	headers := []string{"Node Name", "Status", "Version", "PODS", "Age"}
+	headers := []string{"Node Name", "Status", "Version", "Age", "PODS"}
 
 	// Add namespace columns for allowed namespaces
 	var namespaces []string
@@ -225,10 +281,10 @@ func updateNodeData(clientset *kubernetes.Clientset, table *tview.Table, nodeMap
 		table.SetCell(i, 2, tview.NewTableCell(data.Version).
 			SetTextColor(tcell.ColorSkyblue).
 			SetExpansion(1))
-		table.SetCell(i, 3, tview.NewTableCell(data.PodCount).
+		table.SetCell(i, 3, tview.NewTableCell(data.Age).
 			SetTextColor(tcell.ColorSkyblue).
 			SetExpansion(1))
-		table.SetCell(i, 4, tview.NewTableCell(data.Age).
+		table.SetCell(i, 4, tview.NewTableCell(data.PodCount).
 			SetTextColor(tcell.ColorSkyblue).
 			SetExpansion(1))
 

@@ -51,7 +51,7 @@ func FormatDuration(d time.Duration) string {
 
 // SetupNodeTable initializes a table with node headers
 func SetupNodeTable(table *tview.Table) {
-	headers := []string{"Node Name", "Status", "Version", "PODS", "Age", "Pods"}
+	headers := []string{"Node Name", "Status", "Version", "Age", "PODS"}
 	for i, header := range headers {
 		cell := tview.NewTableCell(header).
 			SetTextColor(tcell.ColorWhite).
