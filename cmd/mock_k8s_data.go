@@ -82,18 +82,21 @@ func createMockPodInfo(r *rand.Rand, podName string) PodInfo {
 	containers := make(map[string]ContainerInfo)
 	containerCount := r.Intn(2) + 1 // 1-2 containers per pod
 
+	totalRestarts := 0
 	for i := 0; i < containerCount; i++ {
 		containerName := fmt.Sprintf("%s-container-%d", podName, i)
+		restarts := r.Intn(5) // 0-4 restarts
+		totalRestarts += restarts
 		containers[containerName] = ContainerInfo{
 			Status:       status,
-			RestartCount: r.Intn(5), // 0-4 restarts
+			RestartCount: restarts,
 		}
 	}
 
 	return PodInfo{
 		Name:          podName,
 		Status:        status,
-		RestartCount:  r.Intn(10), // 0-9 restarts
+		RestartCount:  totalRestarts,
 		ContainerInfo: containers,
 	}
 }
@@ -106,7 +109,7 @@ func (p *MockK8sDataProvider) UpdateNodeData(includeNamespaces, excludeNamespace
 	randomNode := nodeNames[r.Intn(len(nodeNames))]
 
 	// Simulate a single change
-	changeType := r.Intn(3) // 0 = pod addition, 1 = pod status change, 2 = node readiness change
+	changeType := r.Intn(4) // 0 = pod addition, 1 = pod status change, 2 = node readiness change, 3 = restart count change
 
 	// Create or update mock nodes and pods
 	nodes := make([]corev1.Node, 0, len(nodeNames))
@@ -156,6 +159,34 @@ func (p *MockK8sDataProvider) UpdateNodeData(includeNamespaces, excludeNamespace
 				node.Status.Conditions[0].Status = corev1.ConditionFalse
 			} else {
 				node.Status.Conditions[0].Status = corev1.ConditionTrue
+			}
+		}
+
+	case 3: // Increment restart count for a random container
+		if len(p.podStates[randomNode]) > 0 {
+			podKeys := make([]string, 0, len(p.podStates[randomNode]))
+			for podName := range p.podStates[randomNode] {
+				podKeys = append(podKeys, podName)
+			}
+			randomPod := podKeys[r.Intn(len(podKeys))]
+			podInfo := p.podStates[randomNode][randomPod]
+
+			// Get a random container
+			containerKeys := make([]string, 0, len(podInfo.ContainerInfo))
+			for containerName := range podInfo.ContainerInfo {
+				containerKeys = append(containerKeys, containerName)
+			}
+			if len(containerKeys) > 0 {
+				randomContainer := containerKeys[r.Intn(len(containerKeys))]
+				containerInfo := podInfo.ContainerInfo[randomContainer]
+
+				// Increment restart count
+				containerInfo.RestartCount++
+				podInfo.ContainerInfo[randomContainer] = containerInfo
+
+				// Update total pod restart count
+				podInfo.RestartCount++
+				p.podStates[randomNode][randomPod] = podInfo
 			}
 		}
 	}
