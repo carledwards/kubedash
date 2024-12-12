@@ -3,12 +3,58 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/client-go/tools/clientcmd/api"
 )
+
+// KubeClientWrapper wraps kubernetes clientset and configuration
+type KubeClientWrapper struct {
+	Clientset *kubernetes.Clientset
+	Config    *api.Config
+}
+
+// NewKubeClient creates a new KubeClient with the current context
+func NewKubeClient() (*KubeClientWrapper, string, error) {
+	// Get current context name
+	loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
+	configOverrides := &clientcmd.ConfigOverrides{}
+	kubeConfig := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(loadingRules, configOverrides)
+
+	config, err := kubeConfig.ClientConfig()
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to get client config: %v", err)
+	}
+
+	rawConfig, err := kubeConfig.RawConfig()
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to get raw config: %v", err)
+	}
+
+	currentContext := rawConfig.CurrentContext
+	contextInfo := rawConfig.Contexts[currentContext]
+	clusterName := contextInfo.Cluster
+	if clusterName == "" {
+		clusterName = currentContext
+	}
+
+	// Create clientset
+	clientset, err := kubernetes.NewForConfig(config)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to create clientset: %v", err)
+	}
+
+	return &KubeClientWrapper{
+		Clientset: clientset,
+		Config:    &rawConfig,
+	}, clusterName, nil
+}
 
 // K8sDataProvider defines the interface for accessing Kubernetes data
 type K8sDataProvider interface {
@@ -53,6 +99,40 @@ func (p *RealK8sDataProvider) GetClusterName() string {
 
 func (p *RealK8sDataProvider) GetNodeMap() map[string]*corev1.Node {
 	return p.nodeMap
+}
+
+// SortPodIndicators sorts pod indicators by color (RED, YELLOW, GREEN)
+func SortPodIndicators(indicators []string) []string {
+	// Define color priority (red = 0, yellow = 1, green = 2)
+	colorPriority := map[string]int{
+		"red":    0,
+		"yellow": 1,
+		"green":  2,
+	}
+
+	// Sort indicators by color
+	sort.Slice(indicators, func(i, j int) bool {
+		var color1, color2 string
+		if strings.Contains(indicators[i], "[red]") {
+			color1 = "red"
+		} else if strings.Contains(indicators[i], "[yellow]") {
+			color1 = "yellow"
+		} else {
+			color1 = "green"
+		}
+
+		if strings.Contains(indicators[j], "[red]") {
+			color2 = "red"
+		} else if strings.Contains(indicators[j], "[yellow]") {
+			color2 = "yellow"
+		} else {
+			color2 = "green"
+		}
+
+		return colorPriority[color1] < colorPriority[color2]
+	})
+
+	return indicators
 }
 
 // getPodInfo extracts PodInfo from a Kubernetes Pod
@@ -174,26 +254,8 @@ func (p *RealK8sDataProvider) UpdateNodeData(includeNamespaces, excludeNamespace
 			podsByNode[nodeName][ns] = make([]string, 0)
 		}
 
-		// Get pod status indicator
-		indicator := "[green]■[white] " // default to success
-		switch {
-		case pod.Status.Phase == corev1.PodFailed:
-			indicator = "[red]■[white] "
-		case pod.Status.Phase == corev1.PodPending || pod.DeletionTimestamp != nil:
-			indicator = "[yellow]■[white] "
-		case pod.Status.Phase == corev1.PodRunning:
-			allReady := true
-			for _, condition := range pod.Status.Conditions {
-				if condition.Type == corev1.PodReady && condition.Status != corev1.ConditionTrue {
-					allReady = false
-					break
-				}
-			}
-			if !allReady {
-				indicator = "[yellow]■[white] "
-			}
-		}
-
+		// Get pod indicator using the GetPodIndicator function from client.go
+		indicator := GetPodIndicator(&pod)
 		podsByNode[nodeName][ns] = append(podsByNode[nodeName][ns], indicator)
 
 		// Update pod info in node data
