@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/gdamore/tcell/v2"
@@ -40,15 +41,6 @@ func NewChangeLogView(logFilePath string) *ChangeLogView {
 	changeFlex := tview.NewFlex().
 		SetDirection(tview.FlexRow)
 
-	// Set border and title on the table itself
-	changeTable.SetBorder(true).
-		SetBorderColor(tcell.ColorGray).
-		SetTitle(" Change Log ").
-		SetBorderAttributes(tcell.AttrDim)
-
-	// Add the table to the flex with focus enabled
-	changeFlex.AddItem(changeTable, 0, 1, true)
-
 	var logFile *os.File
 	if logFilePath != "" {
 		var err error
@@ -57,6 +49,20 @@ func NewChangeLogView(logFilePath string) *ChangeLogView {
 			fmt.Printf("Error opening log file: %v\n", err)
 		}
 	}
+
+	// Set border and title on the table itself
+	title := " Change Log "
+	if logFile != nil {
+		title = fmt.Sprintf(" Change Log [%s] ", filepath.Base(logFilePath))
+	}
+
+	changeTable.SetBorder(true).
+		SetBorderColor(tcell.ColorGray).
+		SetTitle(title).
+		SetBorderAttributes(tcell.AttrDim)
+
+	// Add the table to the flex with focus enabled
+	changeFlex.AddItem(changeTable, 0, 1, true)
 
 	cv := &ChangeLogView{
 		table:   changeTable,
