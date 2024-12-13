@@ -142,12 +142,27 @@ func (a *App) retryInBackground() {
 			return // Stop retrying if error is cleared
 		}
 
-		if err := a.refreshData(); err == nil {
-			// Success - dismiss error message and return
-			a.hasError.Store(false)
+		// Get fresh data and verify we actually got valid data
+		nodeData, podsByNode, err := a.provider.UpdateNodeData(
+			a.config.IncludeNamespaces,
+			a.config.ExcludeNamespaces,
+		)
+		if err == nil && len(nodeData) > 0 {
+			// Success with valid data - update UI and dismiss error
 			a.ui.app.QueueUpdateDraw(func() {
+				// Update nodeView's map
+				for k := range a.ui.nodeView.GetNodeMap() {
+					delete(a.ui.nodeView.GetNodeMap(), k)
+				}
+				for k, v := range a.provider.GetNodeMap() {
+					a.ui.nodeView.GetNodeMap()[k] = v
+				}
+
+				// Update UI and dismiss error
+				a.ui.UpdateTable(nodeData, podsByNode)
 				a.ui.DismissErrorMessage()
 			})
+			a.hasError.Store(false)
 			return
 		}
 	}

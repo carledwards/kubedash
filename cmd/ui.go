@@ -38,7 +38,7 @@ func NewUI(mainApp *App) *UI {
 func (ui *UI) ShowErrorMessage() {
 	if ui.errorModal == nil {
 		ui.errorModal = tview.NewModal().
-			SetText("Unable to fetch Kubernetes data. Retrying in background...")
+			SetText("Unable to fetch Kubernetes data.\nCheck your network connection.\nWill retry automatically.")
 	}
 	ui.pages.AddPage("error", ui.errorModal, false, true)
 }
