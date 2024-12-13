@@ -21,6 +21,7 @@ type UI struct {
 	mainFlex      *tview.Flex
 	pages         *tview.Pages
 	errorModal    *tview.Modal
+	mainBox       *tview.Box
 }
 
 // NewUI creates a new UI instance
@@ -64,16 +65,16 @@ func (ui *UI) Setup() error {
 	ui.components = []tview.Primitive{table, changeLogTable}
 
 	// Create a box to hold everything
-	box := tview.NewBox().
+	ui.mainBox = tview.NewBox().
 		SetBorder(true).
 		SetBorderColor(tcell.ColorGray).
-		SetTitle(fmt.Sprintf(" %s ", ui.mainApp.GetProvider().GetClusterName())).
+		SetTitle(fmt.Sprintf("  %s  ", ui.mainApp.GetProvider().GetClusterName())).
 		SetTitleAlign(tview.AlignCenter).
 		SetBorderAttributes(tcell.AttrDim)
 
 	// Set the application and box in the changelog view for flashing effect
 	ui.changeLogView.SetApplication(ui.app)
-	ui.changeLogView.SetBox(box)
+	ui.changeLogView.SetBox(ui.mainBox)
 
 	// Create a flex container for the table and changelog
 	mainFlex := tview.NewFlex().
@@ -90,7 +91,7 @@ func (ui *UI) Setup() error {
 		AddItem(tview.NewFlex().
 			SetDirection(tview.FlexColumn).
 			AddItem(nil, 1, 1, false).
-			AddItem(box, 0, 1, true).
+			AddItem(ui.mainBox, 0, 1, true).
 			AddItem(nil, 1, 1, false),
 			0, 1, true)
 
@@ -102,15 +103,9 @@ func (ui *UI) Setup() error {
 	ui.setupMouseHandling()
 
 	// Set the draw func to handle resizing
-	box.SetDrawFunc(func(screen tcell.Screen, x, y, width, height int) (int, int, int, int) {
-		if ui.mainApp.IsRefreshing() {
-			spinnerChar := string(ui.mainApp.GetSpinnerChar())
-			tview.Print(screen, spinnerChar, x+width-2, y, 1, tview.AlignRight, tcell.ColorYellow)
-		}
-
+	ui.mainBox.SetDrawFunc(func(screen tcell.Screen, x, y, width, height int) (int, int, int, int) {
 		mainFlex.SetRect(x+1, y+1, width-2, height-2)
 		mainFlex.Draw(screen)
-
 		return x, y, width, height
 	})
 
@@ -143,7 +138,9 @@ func (ui *UI) setupKeyboardHandling() {
 		// Handle global 'r' key for refreshing data
 		if !ui.mainApp.IsShowingDetails() && event.Rune() == 'r' {
 			if err := ui.mainApp.refreshData(); err != nil {
-				ui.ShowErrorMessage()
+				ui.app.QueueUpdateDraw(func() {
+					ui.ShowErrorMessage()
+				})
 			}
 			return nil
 		}

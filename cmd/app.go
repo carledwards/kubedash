@@ -108,7 +108,11 @@ func (a *App) Run() error {
 		for range spinnerTicker.C {
 			if a.isRefreshing.Load() {
 				a.spinnerIndex.Add(1)
-				a.ui.app.QueueUpdateDraw(func() {})
+				a.ui.app.QueueUpdateDraw(func() {
+					// Update the title with spinner
+					clusterName := a.GetProvider().GetClusterName()
+					a.ui.mainBox.SetTitle(fmt.Sprintf("  %s %s", clusterName, string(a.GetSpinnerChar())))
+				})
 			}
 		}
 	}()
@@ -151,52 +155,71 @@ func (a *App) retryInBackground() {
 
 // refreshData updates the node and pod data
 func (a *App) refreshData() error {
-	if !a.showingDetails && !a.isRefreshing.Load() {
-		a.isRefreshing.Store(true)
-		defer a.isRefreshing.Store(false)
+	// Use CompareAndSwap to ensure only one refresh runs at a time
+	if !a.isRefreshing.CompareAndSwap(false, true) {
+		return nil
+	}
 
-		nodeData, podsByNode, err := a.provider.UpdateNodeData(
-			a.config.IncludeNamespaces,
-			a.config.ExcludeNamespaces,
-		)
-		if err != nil {
-			return fmt.Errorf("failed to refresh data: %v", err)
+	// Ensure we reset the state when done
+	defer func() {
+		a.isRefreshing.Store(false)
+		// Force a final redraw to clear the spinner
+		a.ui.app.QueueUpdateDraw(func() {
+			clusterName := a.GetProvider().GetClusterName()
+			a.ui.mainBox.SetTitle(fmt.Sprintf("  %s  ", clusterName))
+		})
+	}()
+
+	// Don't refresh if showing details
+	if a.showingDetails {
+		return nil
+	}
+
+	// Get fresh data
+	nodeData, podsByNode, err := a.provider.UpdateNodeData(
+		a.config.IncludeNamespaces,
+		a.config.ExcludeNamespaces,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to refresh data: %v", err)
+	}
+
+	// Check for changes and update changelog
+	for nodeName, newData := range nodeData {
+		changes := a.stateCache.Compare(nodeName, ResourceState{
+			Data:      newData,
+			Timestamp: time.Now(),
+		})
+		for _, change := range changes {
+			a.ui.changeLogView.AddChange(change)
 		}
+	}
 
-		// Check for changes and update changelog
-		for nodeName, newData := range nodeData {
+	// Check for removed nodes
+	for nodeName := range a.ui.nodeView.GetNodeMap() {
+		if _, exists := nodeData[nodeName]; !exists {
 			changes := a.stateCache.Compare(nodeName, ResourceState{
-				Data:      newData,
+				Data:      nil,
 				Timestamp: time.Now(),
 			})
 			for _, change := range changes {
 				a.ui.changeLogView.AddChange(change)
 			}
 		}
-
-		// Check for removed nodes
-		for nodeName := range a.ui.nodeView.GetNodeMap() {
-			if _, exists := nodeData[nodeName]; !exists {
-				changes := a.stateCache.Compare(nodeName, ResourceState{
-					Data:      nil,
-					Timestamp: time.Now(),
-				})
-				for _, change := range changes {
-					a.ui.changeLogView.AddChange(change)
-				}
-			}
-		}
-
-		// Update nodeView's map
-		for k := range a.ui.nodeView.GetNodeMap() {
-			delete(a.ui.nodeView.GetNodeMap(), k)
-		}
-		for k, v := range a.provider.GetNodeMap() {
-			a.ui.nodeView.GetNodeMap()[k] = v
-		}
-
-		a.ui.UpdateTable(nodeData, podsByNode)
 	}
+
+	// Update nodeView's map
+	for k := range a.ui.nodeView.GetNodeMap() {
+		delete(a.ui.nodeView.GetNodeMap(), k)
+	}
+	for k, v := range a.provider.GetNodeMap() {
+		a.ui.nodeView.GetNodeMap()[k] = v
+	}
+
+	// Update the UI
+	a.ui.app.QueueUpdateDraw(func() {
+		a.ui.UpdateTable(nodeData, podsByNode)
+	})
 
 	return nil
 }
