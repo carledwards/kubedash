@@ -58,9 +58,29 @@ func NewApp(config *Config) (*App, error) {
 func (a *App) Run() error {
 	fmt.Println("Starting application...")
 
-	// Initial data load
-	if err := a.refreshData(); err != nil {
+	// Initial data load without changelog updates
+	nodeData, podsByNode, err := a.provider.UpdateNodeData(
+		a.config.IncludeNamespaces,
+		a.config.ExcludeNamespaces,
+	)
+	if err != nil {
 		return fmt.Errorf("failed to load initial data: %v", err)
+	}
+
+	// Update nodeView's map with the provider's map
+	for k, v := range a.provider.GetNodeMap() {
+		a.ui.nodeView.GetNodeMap()[k] = v
+	}
+
+	// Update UI with initial data
+	a.ui.UpdateTable(nodeData, podsByNode)
+
+	// Initialize state cache after UI is ready
+	for nodeName, data := range nodeData {
+		a.stateCache.Put(nodeName, ResourceState{
+			Data:      data,
+			Timestamp: time.Now(),
+		})
 	}
 
 	// Set up auto-refresh ticker
