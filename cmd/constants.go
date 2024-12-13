@@ -43,6 +43,24 @@ const (
 const (
 	KeyRefresh      = 'r'
 	KeyClearHistory = 'c'
+	KeyHelp         = '?'
+)
+
+// Dialog text
+const (
+	ErrorDialogText = "Unable to fetch Kubernetes data.\nCheck your network connection.\nWill retry automatically."
+
+	HelpDialogText = `Keyboard Shortcuts:
+
+[yellow]?[white] - Show this help
+[yellow]r[white] - Refresh data
+[yellow]c[white] - Clear changelog
+[yellow]Tab[white] - Switch between main view and changelog
+[yellow]Enter[white] - Show node details
+[yellow]Esc[white] - Close details view or help
+[yellow]↑/↓/←/→[white] - Navigate tables
+[yellow]PgUp/PgDn[white] - Page up/down in details view
+[yellow]Home/End[white] - Jump to top/bottom in details view`
 )
 
 // Time intervals

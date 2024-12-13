@@ -21,6 +21,7 @@ type UI struct {
 	mainFlex      *tview.Flex
 	pages         *tview.Pages
 	errorModal    *tview.Modal
+	helpModal     *tview.Modal
 	mainBox       *tview.Box
 }
 
@@ -38,7 +39,7 @@ func NewUI(mainApp *App) *UI {
 func (ui *UI) ShowErrorMessage() {
 	if ui.errorModal == nil {
 		ui.errorModal = tview.NewModal().
-			SetText("Unable to fetch Kubernetes data.\nCheck your network connection.\nWill retry automatically.")
+			SetText(ErrorDialogText)
 	}
 	ui.pages.AddPage("error", ui.errorModal, false, true)
 }
@@ -46,6 +47,21 @@ func (ui *UI) ShowErrorMessage() {
 // DismissErrorMessage removes the error message modal
 func (ui *UI) DismissErrorMessage() {
 	ui.pages.RemovePage("error")
+}
+
+// ShowHelpModal displays the keyboard shortcuts help
+func (ui *UI) ShowHelpModal() {
+	if ui.helpModal == nil {
+		ui.helpModal = tview.NewModal().
+			SetText(HelpDialogText).
+			SetBackgroundColor(tcell.ColorDimGray)
+	}
+	ui.pages.AddPage("help", ui.helpModal, false, true)
+}
+
+// DismissHelpModal removes the help modal
+func (ui *UI) DismissHelpModal() {
+	ui.pages.RemovePage("help")
 }
 
 // Setup initializes all UI components
@@ -125,48 +141,77 @@ func (ui *UI) Setup() error {
 	return nil
 }
 
+// hasActiveModal checks if any modal is currently displayed
+func (ui *UI) hasActiveModal() bool {
+	return ui.pages.HasPage("error") || ui.pages.HasPage("help")
+}
+
 // setupKeyboardHandling sets up keyboard input handling
 func (ui *UI) setupKeyboardHandling() {
 	ui.app.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
-		// Handle global 'c' key for clearing changelog
-		if !ui.mainApp.IsShowingDetails() && event.Rune() == KeyClearHistory {
-			ui.changeLogView.Clear()
+		// If error modal is active, ignore all keyboard input
+		if ui.pages.HasPage("error") {
 			return nil
 		}
 
-		// Handle global 'r' key for refreshing data
-		if !ui.mainApp.IsShowingDetails() && event.Rune() == KeyRefresh {
-			ui.mainApp.TriggerRefresh() // Use the new channel-based refresh trigger
+		// If help modal is active, only handle Esc key
+		if ui.pages.HasPage("help") {
+			if event.Key() == tcell.KeyEscape {
+				ui.DismissHelpModal()
+			}
 			return nil
 		}
 
-		if event.Key() == tcell.KeyEscape {
-			if ui.mainApp.IsShowingDetails() {
+		// Handle global '?' key for help when no modal is active
+		if !ui.hasActiveModal() && event.Rune() == KeyHelp {
+			ui.ShowHelpModal()
+			return nil
+		}
+
+		// If showing details view, handle its specific keys
+		if ui.mainApp.IsShowingDetails() {
+			if event.Key() == tcell.KeyEscape {
 				ui.mainApp.SetShowingDetails(false)
 				ui.app.SetRoot(ui.pages, true)
 				ui.app.SetFocus(ui.nodeView.GetTable())
 				return nil
 			}
-		}
-
-		// Handle Tab key for switching focus between main table and changelog
-		if !ui.mainApp.IsShowingDetails() && event.Key() == tcell.KeyTab {
-			ui.focusIndex = (ui.focusIndex + 1) % len(ui.components)
-			ui.app.SetFocus(ui.components[ui.focusIndex])
-			return nil
-		}
-
-		if ui.mainApp.IsShowingDetails() {
 			return ui.handleDetailsViewKeys(event)
 		}
 
-		return ui.handleMainViewKeys(event)
+		// Handle other global keys when no modal is active
+		if !ui.hasActiveModal() {
+			switch event.Rune() {
+			case KeyClearHistory:
+				ui.changeLogView.Clear()
+				return nil
+			case KeyRefresh:
+				ui.mainApp.TriggerRefresh()
+				return nil
+			}
+
+			// Handle Tab key
+			if event.Key() == tcell.KeyTab {
+				ui.focusIndex = (ui.focusIndex + 1) % len(ui.components)
+				ui.app.SetFocus(ui.components[ui.focusIndex])
+				return nil
+			}
+
+			return ui.handleMainViewKeys(event)
+		}
+
+		return nil
 	})
 }
 
 // setupMouseHandling sets up mouse input handling
 func (ui *UI) setupMouseHandling() {
 	ui.app.SetMouseCapture(func(event *tcell.EventMouse, action tview.MouseAction) (*tcell.EventMouse, tview.MouseAction) {
+		// If any modal is active, ignore mouse input
+		if ui.hasActiveModal() {
+			return nil, 0
+		}
+
 		if ui.mainApp.IsShowingDetails() && action == tview.MouseScrollUp {
 			row, _ := ui.detailsView.GetTable().GetSelection()
 			if row > 0 {
