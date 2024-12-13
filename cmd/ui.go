@@ -137,11 +137,7 @@ func (ui *UI) setupKeyboardHandling() {
 
 		// Handle global 'r' key for refreshing data
 		if !ui.mainApp.IsShowingDetails() && event.Rune() == 'r' {
-			if err := ui.mainApp.refreshData(); err != nil {
-				ui.app.QueueUpdateDraw(func() {
-					ui.ShowErrorMessage()
-				})
-			}
+			ui.mainApp.TriggerRefresh() // Use the new channel-based refresh trigger
 			return nil
 		}
 

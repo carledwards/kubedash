@@ -24,6 +24,7 @@ type App struct {
 	spinnerIndex   atomic.Int32
 	showingDetails bool
 	hasError       atomic.Bool
+	refreshChan    chan struct{} // Channel for triggering refreshes
 }
 
 // NewApp creates a new application instance
@@ -41,9 +42,10 @@ func NewApp(config *Config) (*App, error) {
 	}
 
 	app := &App{
-		config:     config,
-		provider:   provider,
-		stateCache: NewStateCache(),
+		config:      config,
+		provider:    provider,
+		stateCache:  NewStateCache(),
+		refreshChan: make(chan struct{}, 1), // Buffered channel to prevent blocking
 	}
 
 	// Create UI components
@@ -84,23 +86,29 @@ func (a *App) Run() error {
 		})
 	}
 
-	// Set up auto-refresh ticker
-	ticker := time.NewTicker(10 * time.Second)
+	// Set up refresh handler
 	go func() {
-		for range ticker.C {
-			if err := a.refreshData(); err != nil {
-				if !a.hasError.Load() {
-					a.hasError.Store(true)
-					a.ui.app.QueueUpdateDraw(func() {
-						a.ui.ShowErrorMessage()
-					})
+		ticker := time.NewTicker(10 * time.Second)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ticker.C:
+				a.refreshChan <- struct{}{} // Trigger refresh on tick
+			case <-a.refreshChan: // Handle refresh triggers
+				if err := a.refreshData(); err != nil {
+					if !a.hasError.Load() {
+						a.hasError.Store(true)
+						a.ui.app.QueueUpdateDraw(func() {
+							a.ui.ShowErrorMessage()
+						})
+					}
+					// Start background retry if not already running
+					go a.retryInBackground()
 				}
-				// Start background retry if not already running
-				go a.retryInBackground()
 			}
 		}
 	}()
-	defer ticker.Stop()
 
 	// Spinner animation ticker
 	spinnerTicker := time.NewTicker(100 * time.Millisecond)
@@ -126,6 +134,14 @@ func (a *App) Run() error {
 	}
 
 	return nil
+}
+
+// TriggerRefresh sends a signal to refresh the data
+func (a *App) TriggerRefresh() {
+	select {
+	case a.refreshChan <- struct{}{}: // Try to send refresh trigger
+	default: // Don't block if channel is full (refresh already pending)
+	}
 }
 
 // retryInBackground attempts to refresh data in the background
