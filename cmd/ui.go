@@ -11,18 +11,19 @@ import (
 
 // UI manages all UI components and interactions
 type UI struct {
-	app           *tview.Application
-	nodeView      *NodeView
-	detailsView   *NodeDetailsView
-	changeLogView *ChangeLogView
-	mainApp       *App
-	focusIndex    int
-	components    []tview.Primitive
-	mainFlex      *tview.Flex
-	pages         *tview.Pages
-	errorModal    *tview.Modal
-	helpModal     *tview.Modal
-	mainBox       *tview.Box
+	app            *tview.Application
+	nodeView       *NodeView
+	detailsView    *NodeDetailsView
+	podDetailsView *PodDetailsView
+	changeLogView  *ChangeLogView
+	mainApp        *App
+	focusIndex     int
+	components     []tview.Primitive
+	mainFlex       *tview.Flex
+	pages          *tview.Pages
+	errorModal     *tview.Modal
+	helpModal      *tview.Modal
+	mainBox        *tview.Box
 }
 
 // NewUI creates a new UI instance
@@ -70,8 +71,9 @@ func (ui *UI) Setup() error {
 	ui.nodeView = NewNodeView(ui.mainApp.config.IncludeNamespaces, ui.mainApp.config.ExcludeNamespaces)
 	table := ui.nodeView.GetTable()
 
-	// Create details view
+	// Create details views
 	ui.detailsView = NewNodeDetailsView()
+	ui.podDetailsView = NewPodDetailsView()
 
 	// Create changelog view
 	ui.changeLogView = NewChangeLogView(ui.mainApp.config.LogFilePath)
@@ -127,8 +129,10 @@ func (ui *UI) Setup() error {
 	// Handle window resize
 	ui.app.SetBeforeDrawFunc(func(screen tcell.Screen) bool {
 		width, height := screen.Size()
-		if !ui.mainApp.IsShowingDetails() {
+		if !ui.mainApp.IsShowingDetails() && !ui.mainApp.IsShowingPods() {
 			ui.pages.SetRect(0, 0, width, height)
+		} else if ui.mainApp.IsShowingPods() {
+			ui.podDetailsView.GetFlex().SetRect(0, 0, width, height)
 		} else {
 			ui.detailsView.GetFlex().SetRect(0, 0, width, height)
 		}
@@ -168,7 +172,18 @@ func (ui *UI) setupKeyboardHandling() {
 			return nil
 		}
 
-		// If showing details view, handle its specific keys
+		// If showing pod details, handle its specific keys
+		if ui.mainApp.IsShowingPods() {
+			if event.Key() == tcell.KeyEscape {
+				ui.mainApp.SetShowingPods(false)
+				ui.app.SetRoot(ui.pages, true)
+				ui.app.SetFocus(ui.nodeView.GetTable())
+				return nil
+			}
+			return ui.handlePodDetailsViewKeys(event)
+		}
+
+		// If showing node details view, handle its specific keys
 		if ui.mainApp.IsShowingDetails() {
 			if event.Key() == tcell.KeyEscape {
 				ui.mainApp.SetShowingDetails(false)
@@ -212,22 +227,68 @@ func (ui *UI) setupMouseHandling() {
 			return nil, 0
 		}
 
-		if ui.mainApp.IsShowingDetails() && action == tview.MouseScrollUp {
-			row, _ := ui.detailsView.GetTable().GetSelection()
+		if (ui.mainApp.IsShowingPods() || ui.mainApp.IsShowingDetails()) && action == tview.MouseScrollUp {
+			row, _ := ui.getCurrentDetailsTable().GetSelection()
 			if row > 0 {
-				ui.detailsView.GetTable().Select(row-1, 0)
+				ui.getCurrentDetailsTable().Select(row-1, 0)
 			}
 			return nil, 0
 		}
-		if ui.mainApp.IsShowingDetails() && action == tview.MouseScrollDown {
-			row, _ := ui.detailsView.GetTable().GetSelection()
-			if row < ui.detailsView.GetTable().GetRowCount()-1 {
-				ui.detailsView.GetTable().Select(row+1, 0)
+		if (ui.mainApp.IsShowingPods() || ui.mainApp.IsShowingDetails()) && action == tview.MouseScrollDown {
+			row, _ := ui.getCurrentDetailsTable().GetSelection()
+			if row < ui.getCurrentDetailsTable().GetRowCount()-1 {
+				ui.getCurrentDetailsTable().Select(row+1, 0)
 			}
 			return nil, 0
 		}
 		return event, action
 	})
+}
+
+// getCurrentDetailsTable returns the currently active details table
+func (ui *UI) getCurrentDetailsTable() *tview.Table {
+	if ui.mainApp.IsShowingPods() {
+		return ui.podDetailsView.GetTable()
+	}
+	return ui.detailsView.GetTable()
+}
+
+// handlePodDetailsViewKeys handles keyboard input for the pod details view
+func (ui *UI) handlePodDetailsViewKeys(event *tcell.EventKey) *tcell.EventKey {
+	row, _ := ui.podDetailsView.GetTable().GetSelection()
+	switch event.Key() {
+	case tcell.KeyUp:
+		if row > 0 {
+			ui.podDetailsView.GetTable().Select(row-1, 0)
+		}
+		return nil
+	case tcell.KeyDown:
+		if row < ui.podDetailsView.GetTable().GetRowCount()-1 {
+			ui.podDetailsView.GetTable().Select(row+1, 0)
+		}
+		return nil
+	case tcell.KeyPgUp:
+		newRow := row - 10
+		if newRow < 0 {
+			newRow = 0
+		}
+		ui.podDetailsView.GetTable().Select(newRow, 0)
+		return nil
+	case tcell.KeyPgDn:
+		newRow := row + 10
+		if newRow >= ui.podDetailsView.GetTable().GetRowCount() {
+			newRow = ui.podDetailsView.GetTable().GetRowCount() - 1
+		}
+		ui.podDetailsView.GetTable().Select(newRow, 0)
+		return nil
+	case tcell.KeyHome:
+		ui.podDetailsView.GetTable().Select(0, 0)
+		return nil
+	case tcell.KeyEnd:
+		ui.podDetailsView.GetTable().Select(ui.podDetailsView.GetTable().GetRowCount()-1, 0)
+		return nil
+	}
+	return event
 }
 
 // handleDetailsViewKeys handles keyboard input for the details view
@@ -295,12 +356,32 @@ func (ui *UI) handleMainViewKeys(event *tcell.EventKey) *tcell.EventKey {
 		return nil
 	case tcell.KeyEnter:
 		nodeName := table.GetCell(row, 0).Text
-		if node, ok := ui.nodeView.GetNodeMap()[nodeName]; ok {
-			ui.detailsView.ShowNodeDetails(node)
-			ui.mainApp.SetShowingDetails(true)
-			ui.app.SetRoot(ui.detailsView.GetFlex(), true)
-			ui.app.SetFocus(ui.detailsView.GetTable())
-			return nil
+		if col <= 4 { // Node columns
+			if node, ok := ui.nodeView.GetNodeMap()[nodeName]; ok {
+				ui.detailsView.ShowNodeDetails(node)
+				ui.mainApp.SetShowingDetails(true)
+				ui.app.SetRoot(ui.detailsView.GetFlex(), true)
+				ui.app.SetFocus(ui.detailsView.GetTable())
+				return nil
+			}
+		} else { // Pod columns
+			namespace := table.GetCell(0, col).Text
+			if podsByNode, err := ui.mainApp.GetProvider().GetPodsByNode(ui.mainApp.config.IncludeNamespaces, ui.mainApp.config.ExcludeNamespaces); err == nil {
+				if nodePods, ok := podsByNode[nodeName]; ok {
+					// Filter pods by namespace
+					namespacePods := make(map[string]PodInfo)
+					for podName, podInfo := range nodePods {
+						if podInfo.Namespace == namespace {
+							namespacePods[podName] = podInfo
+						}
+					}
+					ui.podDetailsView.ShowPodDetails(nodeName, namespace, namespacePods)
+					ui.mainApp.SetShowingPods(true)
+					ui.app.SetRoot(ui.podDetailsView.GetFlex(), true)
+					ui.app.SetFocus(ui.podDetailsView.GetTable())
+					return nil
+				}
+			}
 		}
 	}
 	return event

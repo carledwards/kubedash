@@ -23,6 +23,7 @@ type App struct {
 	isRefreshing   atomic.Bool
 	spinnerIndex   atomic.Int32
 	showingDetails bool
+	showingPods    bool
 	hasError       atomic.Bool
 	refreshChan    chan struct{} // Channel for triggering refreshes
 }
@@ -201,8 +202,8 @@ func (a *App) refreshData() error {
 		})
 	}()
 
-	// Don't refresh if showing details
-	if a.showingDetails {
+	// Don't refresh if showing details or pods
+	if a.showingDetails || a.showingPods {
 		return nil
 	}
 
@@ -279,4 +280,14 @@ func (a *App) SetShowingDetails(showing bool) {
 // IsShowingDetails returns whether the details view is being shown
 func (a *App) IsShowingDetails() bool {
 	return a.showingDetails
+}
+
+// SetShowingPods sets whether the pod details view is being shown
+func (a *App) SetShowingPods(showing bool) {
+	a.showingPods = showing
+}
+
+// IsShowingPods returns whether the pod details view is being shown
+func (a *App) IsShowingPods() bool {
+	return a.showingPods
 }

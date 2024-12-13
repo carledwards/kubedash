@@ -56,11 +56,14 @@ const (
 [yellow]r[white] - Refresh data
 [yellow]c[white] - Clear changelog
 [yellow]Tab[white] - Switch between main view and changelog
-[yellow]Enter[white] - Show node details
+[yellow]Enter[white] - Show node details (on node columns) or pod details (on pod columns)
 [yellow]Esc[white] - Close details view or help
 [yellow]↑/↓/←/→[white] - Navigate tables
 [yellow]PgUp/PgDn[white] - Page up/down in details view
-[yellow]Home/End[white] - Jump to top/bottom in details view`
+[yellow]Home/End[white] - Jump to top/bottom in details view
+
+[yellow]Node Details:[white] Press Enter on node columns (columns 1-5)
+[yellow]Pod Details:[white] Press Enter on pod columns (namespace columns)`
 )
 
 // Time intervals

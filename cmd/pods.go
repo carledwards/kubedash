@@ -9,6 +9,7 @@ import (
 // PodInfo represents information about a pod and its containers
 type PodInfo struct {
 	Name          string
+	Namespace     string
 	Status        string
 	RestartCount  int
 	ContainerInfo map[string]ContainerInfo
@@ -24,6 +25,7 @@ type ContainerInfo struct {
 func GetPodInfo(pod *corev1.Pod) PodInfo {
 	podInfo := PodInfo{
 		Name:          pod.Name,
+		Namespace:     pod.Namespace,
 		Status:        string(pod.Status.Phase),
 		RestartCount:  0,
 		ContainerInfo: make(map[string]ContainerInfo),
