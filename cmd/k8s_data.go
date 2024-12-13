@@ -55,23 +55,7 @@ func NewKubeClient() (*KubeClientWrapper, string, error) {
 	}, clusterName, nil
 }
 
-// K8sDataProvider defines the interface for accessing Kubernetes data
-type K8sDataProvider interface {
-	// GetClusterName returns the name of the cluster
-	GetClusterName() string
-
-	// UpdateNodeData fetches the latest node and pod data
-	// Returns:
-	// - map[string]NodeData: node data indexed by node name
-	// - map[string]map[string][]string: pod indicators by node and namespace
-	// - error: any error that occurred
-	UpdateNodeData(includeNamespaces, excludeNamespaces map[string]bool) (map[string]NodeData, map[string]map[string][]string, error)
-
-	// GetNodeMap returns the current node map
-	GetNodeMap() map[string]*corev1.Node
-}
-
-// RealK8sDataProvider implements K8sDataProvider using actual Kubernetes cluster
+// RealK8sDataProvider implements K8sProvider using actual Kubernetes cluster
 type RealK8sDataProvider struct {
 	BaseK8sDataProvider
 	client      *KubeClientWrapper
@@ -94,8 +78,42 @@ func NewRealK8sDataProvider() (*RealK8sDataProvider, error) {
 	}, nil
 }
 
+// GetClusterName implements ClusterProvider interface
 func (p *RealK8sDataProvider) GetClusterName() string {
 	return p.clusterName
+}
+
+// GetPodsByNode implements PodProvider interface
+func (p *RealK8sDataProvider) GetPodsByNode(includeNamespaces, excludeNamespaces map[string]bool) (map[string]map[string]PodInfo, error) {
+	ctx := context.Background()
+	pods, err := p.client.Clientset.CoreV1().Pods("").List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list pods: %v", err)
+	}
+
+	podsByNode := make(map[string]map[string]PodInfo)
+	for _, pod := range pods.Items {
+		nodeName := pod.Spec.NodeName
+		if nodeName == "" {
+			continue
+		}
+
+		ns := pod.Namespace
+		if excludeNamespaces[ns] {
+			continue
+		}
+		if len(includeNamespaces) > 0 && !includeNamespaces[ns] {
+			continue
+		}
+
+		if _, exists := podsByNode[nodeName]; !exists {
+			podsByNode[nodeName] = make(map[string]PodInfo)
+		}
+
+		podsByNode[nodeName][pod.Name] = getPodInfo(&pod)
+	}
+
+	return podsByNode, nil
 }
 
 // SortPodIndicators sorts pod indicators by color (RED, YELLOW, GREEN)
@@ -179,7 +197,7 @@ func getPodInfo(pod *corev1.Pod) PodInfo {
 	return podInfo
 }
 
-// UpdateNodeData implements K8sDataProvider interface
+// UpdateNodeData implements K8sProvider interface
 func (p *RealK8sDataProvider) UpdateNodeData(includeNamespaces, excludeNamespaces map[string]bool) (map[string]NodeData, map[string]map[string][]string, error) {
 	ctx := context.Background()
 

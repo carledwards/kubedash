@@ -56,7 +56,7 @@ func main() {
 	fmt.Println("Creating data provider...")
 
 	// Create data provider based on flag
-	var dataProvider cmd.K8sDataProvider
+	var dataProvider cmd.K8sProvider
 	var err error
 	if useMockData {
 		dataProvider = cmd.NewMockK8sDataProvider()

@@ -10,7 +10,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// MockK8sDataProvider implements K8sDataProvider using mock data
+// MockK8sDataProvider implements K8sProvider using mock data
 type MockK8sDataProvider struct {
 	BaseK8sDataProvider
 	clusterName string
@@ -32,6 +32,38 @@ func NewMockK8sDataProvider() *MockK8sDataProvider {
 
 func (p *MockK8sDataProvider) GetClusterName() string {
 	return p.clusterName
+}
+
+// GetPodsByNode implements PodProvider interface
+func (p *MockK8sDataProvider) GetPodsByNode(includeNamespaces, excludeNamespaces map[string]bool) (map[string]map[string]PodInfo, error) {
+	result := make(map[string]map[string]PodInfo)
+
+	// Copy the existing pod states
+	for nodeName, pods := range p.podStates {
+		nodePods := make(map[string]PodInfo)
+		for podName, podInfo := range pods {
+			// Extract namespace from pod name (mock-specific format)
+			namespace := "default"
+			if parts := strings.Split(podName, "-"); len(parts) > 2 {
+				namespace = parts[2]
+			}
+
+			// Apply namespace filtering
+			if excludeNamespaces[namespace] {
+				continue
+			}
+			if len(includeNamespaces) > 0 && !includeNamespaces[namespace] {
+				continue
+			}
+
+			nodePods[podName] = podInfo
+		}
+		if len(nodePods) > 0 {
+			result[nodeName] = nodePods
+		}
+	}
+
+	return result, nil
 }
 
 func createMockNodeConditions(status string) []corev1.NodeCondition {
