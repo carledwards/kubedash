@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/gdamore/tcell/v2"
@@ -10,14 +11,15 @@ import (
 
 // ChangeLogView represents the view for displaying change events
 type ChangeLogView struct {
-	table *tview.Table
-	flex  *tview.Flex
-	app   *tview.Application
-	box   *tview.Box
+	table   *tview.Table
+	flex    *tview.Flex
+	app     *tview.Application
+	box     *tview.Box
+	logFile *os.File
 }
 
 // NewChangeLogView creates a new ChangeLogView instance
-func NewChangeLogView() *ChangeLogView {
+func NewChangeLogView(logFilePath string) *ChangeLogView {
 	changeTable := tview.NewTable().
 		SetBorders(false).
 		SetSelectable(true, false).                                      // Make sure table is selectable
@@ -47,15 +49,32 @@ func NewChangeLogView() *ChangeLogView {
 	// Add the table to the flex with focus enabled
 	changeFlex.AddItem(changeTable, 0, 1, true)
 
+	var logFile *os.File
+	if logFilePath != "" {
+		var err error
+		logFile, err = os.OpenFile(logFilePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+		if err != nil {
+			fmt.Printf("Error opening log file: %v\n", err)
+		}
+	}
+
 	cv := &ChangeLogView{
-		table: changeTable,
-		flex:  changeFlex,
+		table:   changeTable,
+		flex:    changeFlex,
+		logFile: logFile,
 	}
 
 	// Ensure the table starts with a selection
 	changeTable.Select(0, 0)
 
 	return cv
+}
+
+// Close closes the log file if it's open
+func (cv *ChangeLogView) Close() {
+	if cv.logFile != nil {
+		cv.logFile.Close()
+	}
 }
 
 // SetApplication sets the tview application instance
@@ -107,7 +126,7 @@ func (cv *ChangeLogView) flashTitle() {
 func (cv *ChangeLogView) AddChange(change ChangeEvent) {
 	// Format the row data
 	cells := []*tview.TableCell{
-		tview.NewTableCell(change.Timestamp.Format("15:04:05")).SetTextColor(tcell.ColorWhite),
+		tview.NewTableCell(change.Timestamp.Format("2006-01-02 15:04:05")).SetTextColor(tcell.ColorWhite),
 		tview.NewTableCell(change.ResourceType).SetTextColor(tcell.ColorYellow),
 		tview.NewTableCell(change.ResourceName).SetTextColor(tcell.ColorAqua),
 		tview.NewTableCell(change.ChangeType).SetTextColor(func() tcell.Color {
@@ -132,6 +151,24 @@ func (cv *ChangeLogView) AddChange(change ChangeEvent) {
 
 	// Optional: Ensure focus stays at the top
 	cv.table.Select(1, 0)
+
+	// Write to log file if enabled
+	if cv.logFile != nil {
+		logEntry := fmt.Sprintf("[%s] %s %s %s: Field '%s' changed from '%s' to '%s'\n",
+			change.Timestamp.Format("2006-01-02 15:04:05"),
+			change.ResourceType,
+			change.ResourceName,
+			change.ChangeType,
+			change.Field,
+			formatValue(change.OldValue),
+			formatValue(change.NewValue))
+
+		if _, err := cv.logFile.WriteString(logEntry); err != nil {
+			fmt.Printf("Error writing to log file: %v\n", err)
+		}
+		// Flush immediately
+		cv.logFile.Sync()
+	}
 
 	// Trigger title flash
 	cv.flashTitle()

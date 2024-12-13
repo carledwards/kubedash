@@ -19,9 +19,11 @@ func main() {
 	// Define flags
 	var namespaces []string
 	var useMockData bool
+	var logFilePath string
 	flag.Var((*cmd.ArrayFlags)(&namespaces), "N", "Filter by namespace (can be specified multiple times or comma-separated, prefix with - to exclude)")
 	flag.Var((*cmd.ArrayFlags)(&namespaces), "namespace", "Filter by namespace (can be specified multiple times or comma-separated, prefix with - to exclude)")
 	flag.BoolVar(&useMockData, "mock-k8s-data", false, "Use mock Kubernetes data instead of real cluster")
+	flag.StringVar(&logFilePath, "logfile", "", "Path to file for logging changes")
 	flag.Parse()
 
 	// Create maps for included and excluded namespaces
@@ -47,8 +49,11 @@ func main() {
 	detailsView := cmd.NewNodeDetailsView()
 
 	// Create changelog view
-	changeLogView := cmd.NewChangeLogView()
+	changeLogView := cmd.NewChangeLogView(logFilePath)
 	changeLogTable := changeLogView.GetTable()
+
+	// Ensure changelog is closed when application exits
+	defer changeLogView.Close()
 
 	// Create state cache for tracking changes
 	stateCache := cmd.NewStateCache()
