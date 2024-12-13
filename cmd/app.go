@@ -88,7 +88,7 @@ func (a *App) Run() error {
 
 	// Set up refresh handler
 	go func() {
-		ticker := time.NewTicker(10 * time.Second)
+		ticker := time.NewTicker(RefreshInterval)
 		defer ticker.Stop()
 
 		for {

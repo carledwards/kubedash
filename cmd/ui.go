@@ -129,13 +129,13 @@ func (ui *UI) Setup() error {
 func (ui *UI) setupKeyboardHandling() {
 	ui.app.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 		// Handle global 'c' key for clearing changelog
-		if !ui.mainApp.IsShowingDetails() && event.Rune() == 'c' {
+		if !ui.mainApp.IsShowingDetails() && event.Rune() == KeyClearHistory {
 			ui.changeLogView.Clear()
 			return nil
 		}
 
 		// Handle global 'r' key for refreshing data
-		if !ui.mainApp.IsShowingDetails() && event.Rune() == 'r' {
+		if !ui.mainApp.IsShowingDetails() && event.Rune() == KeyRefresh {
 			ui.mainApp.TriggerRefresh() // Use the new channel-based refresh trigger
 			return nil
 		}

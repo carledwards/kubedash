@@ -1,5 +1,7 @@
 package cmd
 
+import "time"
+
 // Pod status indicators with colors
 const (
 	PodIndicatorGreen  = "[green]■[white] "
@@ -35,4 +37,16 @@ const (
 const (
 	NodeStatusReady    = "Ready"
 	NodeStatusNotReady = "NotReady"
+)
+
+// Keyboard commands
+const (
+	KeyRefresh      = 'r'
+	KeyClearHistory = 'c'
+)
+
+// Time intervals
+const (
+	RefreshInterval = 10 * time.Second
+	APITimeout      = 30 * time.Second
 )
