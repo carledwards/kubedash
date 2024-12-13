@@ -154,14 +154,11 @@ func (cv *ChangeLogView) AddChange(change ChangeEvent) {
 
 	// Write to log file if enabled
 	if cv.logFile != nil {
-		logEntry := fmt.Sprintf("[%s] %s %s %s: Field '%s' changed from '%s' to '%s'\n",
+		logEntry := fmt.Sprintf("[%s] %s %s %s\n",
 			change.Timestamp.Format("2006-01-02 15:04:05"),
 			change.ResourceType,
 			change.ResourceName,
-			change.ChangeType,
-			change.Field,
-			formatValue(change.OldValue),
-			formatValue(change.NewValue))
+			change.ChangeType)
 
 		if _, err := cv.logFile.WriteString(logEntry); err != nil {
 			fmt.Printf("Error writing to log file: %v\n", err)
@@ -179,6 +176,13 @@ func formatValue(value interface{}) string {
 	if value == nil {
 		return "-"
 	}
+
+	// If it's a NodeData struct, just return "present" or a simplified representation
+	if _, ok := value.(NodeData); ok {
+		return "present"
+	}
+
+	// For other types, return a simple string representation
 	return fmt.Sprintf("%v", value)
 }
 

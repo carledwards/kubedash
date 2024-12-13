@@ -16,18 +16,78 @@ type MockK8sDataProvider struct {
 	clusterName string
 	podStates   map[string]map[string]PodInfo
 	rand        *rand.Rand // node -> pod name -> pod info
+	nodeCounter int        // Counter for generating new node names
 }
 
 // NewMockK8sDataProvider creates a new MockK8sDataProvider
 func NewMockK8sDataProvider() *MockK8sDataProvider {
-	return &MockK8sDataProvider{
+	provider := &MockK8sDataProvider{
 		BaseK8sDataProvider: BaseK8sDataProvider{
 			nodeMap: make(map[string]*corev1.Node),
 		},
 		clusterName: "mock-cluster",
 		podStates:   make(map[string]map[string]PodInfo),
 		rand:        rand.New(rand.NewSource(time.Now().UnixNano())),
+		nodeCounter: 3, // Start with 3 initial nodes
 	}
+
+	// Initialize with some default nodes
+	for i := 1; i <= 3; i++ {
+		nodeName := fmt.Sprintf("node%d", i)
+		provider.nodeMap[nodeName] = &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: nodeName,
+				CreationTimestamp: metav1.Time{
+					Time: time.Now().Add(-24 * time.Hour), // Created 24h ago
+				},
+			},
+			Status: corev1.NodeStatus{
+				Conditions: createMockNodeConditions("True"),
+				NodeInfo: corev1.NodeSystemInfo{
+					KubeletVersion: "v1.24.0",
+				},
+			},
+		}
+
+		// Add some default pods to each node
+		provider.podStates[nodeName] = make(map[string]PodInfo)
+
+		// Add a monitoring pod
+		monitoringPod := fmt.Sprintf("%s-pod-monitoring-1", nodeName)
+		provider.podStates[nodeName][monitoringPod] = PodInfo{
+			Name:         monitoringPod,
+			Status:       PodStatusRunning,
+			RestartCount: 0,
+			ContainerInfo: map[string]ContainerInfo{
+				"prometheus": {Status: PodStatusRunning, RestartCount: 0},
+			},
+		}
+
+		// Add a default namespace pod
+		defaultPod := fmt.Sprintf("%s-pod-default-1", nodeName)
+		provider.podStates[nodeName][defaultPod] = PodInfo{
+			Name:         defaultPod,
+			Status:       PodStatusRunning,
+			RestartCount: 2,
+			ContainerInfo: map[string]ContainerInfo{
+				"web-server": {Status: PodStatusRunning, RestartCount: 2},
+				"sidecar":    {Status: PodStatusRunning, RestartCount: 0},
+			},
+		}
+
+		// Add a kube-system pod
+		systemPod := fmt.Sprintf("%s-pod-kube-system-1", nodeName)
+		provider.podStates[nodeName][systemPod] = PodInfo{
+			Name:         systemPod,
+			Status:       PodStatusRunning,
+			RestartCount: 1,
+			ContainerInfo: map[string]ContainerInfo{
+				"kube-proxy": {Status: PodStatusRunning, RestartCount: 1},
+			},
+		}
+	}
+
+	return provider
 }
 
 func (p *MockK8sDataProvider) GetClusterName() string {
@@ -135,117 +195,139 @@ func (p *MockK8sDataProvider) GetPodsByNode(includeNamespaces, excludeNamespaces
 func (p *MockK8sDataProvider) UpdateNodeData(includeNamespaces, excludeNamespaces map[string]bool) (map[string]NodeData, map[string]map[string][]string, error) {
 	r := p.rand
 
-	// Randomly pick a node to change
-	nodeNames := []string{"node1", "node2", "node3"}
-	randomNode := nodeNames[r.Intn(len(nodeNames))]
+	// Get list of current nodes
+	nodeNames := make([]string, 0)
+	for nodeName := range p.nodeMap {
+		nodeNames = append(nodeNames, nodeName)
+	}
 
-	// Simulate a single change
-	changeType := r.Intn(4) // 0 = pod addition, 1 = pod status change, 2 = node readiness change, 3 = restart count change
-
-	// Create or update mock nodes and pods
-	nodes := make([]corev1.Node, 0, len(nodeNames))
-	pods := make([]corev1.Pod, 0)
+	// Randomly pick a change type
+	// 0 = pod addition
+	// 1 = pod status change
+	// 2 = node readiness change
+	// 3 = restart count change
+	// 4 = add new node
+	// 5 = delete node
+	// 6 = delete pod
+	changeType := r.Intn(7)
 
 	// Process changes based on type
 	switch changeType {
 	case 0: // Add a new pod
-		namespace := []string{"default", "kube-system", "monitoring"}[r.Intn(3)]
-		if !excludeNamespaces[namespace] && (len(includeNamespaces) == 0 || includeNamespaces[namespace]) {
-			podName := fmt.Sprintf("%s-pod-%s-%d", randomNode, namespace, len(p.podStates[randomNode])+1)
-			podInfo := createMockPodInfo(r, podName)
+		if len(nodeNames) > 0 {
+			randomNode := nodeNames[r.Intn(len(nodeNames))]
+			namespace := []string{"default", "kube-system", "monitoring"}[r.Intn(3)]
+			if !excludeNamespaces[namespace] && (len(includeNamespaces) == 0 || includeNamespaces[namespace]) {
+				podName := fmt.Sprintf("%s-pod-%s-%d", randomNode, namespace, len(p.podStates[randomNode])+1)
+				podInfo := createMockPodInfo(r, podName)
 
-			if _, exists := p.podStates[randomNode]; !exists {
-				p.podStates[randomNode] = make(map[string]PodInfo)
+				if _, exists := p.podStates[randomNode]; !exists {
+					p.podStates[randomNode] = make(map[string]PodInfo)
+				}
+				p.podStates[randomNode][podName] = podInfo
 			}
-			p.podStates[randomNode][podName] = podInfo
 		}
 
 	case 1: // Update a pod status
-		if len(p.podStates[randomNode]) > 0 {
-			podKeys := make([]string, 0, len(p.podStates[randomNode]))
-			for podName := range p.podStates[randomNode] {
-				podKeys = append(podKeys, podName)
+		if len(nodeNames) > 0 {
+			randomNode := nodeNames[r.Intn(len(nodeNames))]
+			if len(p.podStates[randomNode]) > 0 {
+				podKeys := make([]string, 0, len(p.podStates[randomNode]))
+				for podName := range p.podStates[randomNode] {
+					podKeys = append(podKeys, podName)
+				}
+				randomPod := podKeys[r.Intn(len(podKeys))]
+				updatedPod := createMockPodInfo(r, randomPod)
+				p.podStates[randomNode][randomPod] = updatedPod
 			}
-			randomPod := podKeys[r.Intn(len(podKeys))]
-			updatedPod := createMockPodInfo(r, randomPod)
-			p.podStates[randomNode][randomPod] = updatedPod
 		}
 
 	case 2: // Change node readiness
-		node, exists := p.nodeMap[randomNode]
-		if !exists {
-			node = &corev1.Node{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: randomNode,
-				},
-				Status: corev1.NodeStatus{
-					Conditions: createMockNodeConditions("False"),
-				},
-			}
-			p.nodeMap[randomNode] = node
-		}
-
-		if len(node.Status.Conditions) > 0 {
-			if node.Status.Conditions[0].Status == corev1.ConditionTrue {
-				node.Status.Conditions[0].Status = corev1.ConditionFalse
-			} else {
-				node.Status.Conditions[0].Status = corev1.ConditionTrue
+		if len(nodeNames) > 0 {
+			randomNode := nodeNames[r.Intn(len(nodeNames))]
+			node := p.nodeMap[randomNode]
+			if len(node.Status.Conditions) > 0 {
+				if node.Status.Conditions[0].Status == corev1.ConditionTrue {
+					node.Status.Conditions[0].Status = corev1.ConditionFalse
+				} else {
+					node.Status.Conditions[0].Status = corev1.ConditionTrue
+				}
 			}
 		}
 
 	case 3: // Increment restart count for a random container
-		if len(p.podStates[randomNode]) > 0 {
-			podKeys := make([]string, 0, len(p.podStates[randomNode]))
-			for podName := range p.podStates[randomNode] {
-				podKeys = append(podKeys, podName)
-			}
-			randomPod := podKeys[r.Intn(len(podKeys))]
-			podInfo := p.podStates[randomNode][randomPod]
+		if len(nodeNames) > 0 {
+			randomNode := nodeNames[r.Intn(len(nodeNames))]
+			if len(p.podStates[randomNode]) > 0 {
+				podKeys := make([]string, 0, len(p.podStates[randomNode]))
+				for podName := range p.podStates[randomNode] {
+					podKeys = append(podKeys, podName)
+				}
+				randomPod := podKeys[r.Intn(len(podKeys))]
+				podInfo := p.podStates[randomNode][randomPod]
 
-			// Get a random container
-			containerKeys := make([]string, 0, len(podInfo.ContainerInfo))
-			for containerName := range podInfo.ContainerInfo {
-				containerKeys = append(containerKeys, containerName)
-			}
-			if len(containerKeys) > 0 {
-				randomContainer := containerKeys[r.Intn(len(containerKeys))]
-				containerInfo := podInfo.ContainerInfo[randomContainer]
+				// Get a random container
+				containerKeys := make([]string, 0, len(podInfo.ContainerInfo))
+				for containerName := range podInfo.ContainerInfo {
+					containerKeys = append(containerKeys, containerName)
+				}
+				if len(containerKeys) > 0 {
+					randomContainer := containerKeys[r.Intn(len(containerKeys))]
+					containerInfo := podInfo.ContainerInfo[randomContainer]
 
-				// Increment restart count
-				containerInfo.RestartCount++
-				podInfo.ContainerInfo[randomContainer] = containerInfo
+					// Increment restart count
+					containerInfo.RestartCount++
+					podInfo.ContainerInfo[randomContainer] = containerInfo
 
-				// Update total pod restart count
-				podInfo.RestartCount++
-				p.podStates[randomNode][randomPod] = podInfo
+					// Update total pod restart count
+					podInfo.RestartCount++
+					p.podStates[randomNode][randomPod] = podInfo
+				}
 			}
 		}
-	}
 
-	// Build nodes list
-	for _, nodeName := range nodeNames {
-		node, exists := p.nodeMap[nodeName]
-		if !exists {
-			node = &corev1.Node{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: nodeName,
-					CreationTimestamp: metav1.Time{
-						Time: time.Now().Add(-24 * time.Hour), // Mock nodes created 24h ago
-					},
+	case 4: // Add new node
+		p.nodeCounter++
+		newNodeName := fmt.Sprintf("node%d", p.nodeCounter)
+		p.nodeMap[newNodeName] = &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: newNodeName,
+				CreationTimestamp: metav1.Time{
+					Time: time.Now(),
 				},
-				Status: corev1.NodeStatus{
-					Conditions: createMockNodeConditions("True"),
-					NodeInfo: corev1.NodeSystemInfo{
-						KubeletVersion: "v1.24.0",
-					},
+			},
+			Status: corev1.NodeStatus{
+				Conditions: createMockNodeConditions("True"),
+				NodeInfo: corev1.NodeSystemInfo{
+					KubeletVersion: "v1.24.0",
 				},
-			}
-			p.nodeMap[nodeName] = node
+			},
 		}
-		nodes = append(nodes, *node)
+		nodeNames = append(nodeNames, newNodeName)
+
+	case 5: // Delete node
+		if len(nodeNames) > 1 { // Keep at least one node
+			randomNode := nodeNames[r.Intn(len(nodeNames))]
+			delete(p.nodeMap, randomNode)
+			delete(p.podStates, randomNode)
+		}
+
+	case 6: // Delete pod
+		if len(nodeNames) > 0 {
+			randomNode := nodeNames[r.Intn(len(nodeNames))]
+			if len(p.podStates[randomNode]) > 0 {
+				podKeys := make([]string, 0, len(p.podStates[randomNode]))
+				for podName := range p.podStates[randomNode] {
+					podKeys = append(podKeys, podName)
+				}
+				randomPod := podKeys[r.Intn(len(podKeys))]
+				delete(p.podStates[randomNode], randomPod)
+			}
+		}
 	}
 
 	// Build pods list from pod states
+	pods := make([]corev1.Pod, 0)
 	for nodeName, nodePods := range p.podStates {
 		for podName, podInfo := range nodePods {
 			namespace := "default"
@@ -267,6 +349,12 @@ func (p *MockK8sDataProvider) UpdateNodeData(includeNamespaces, excludeNamespace
 			}
 			pods = append(pods, pod)
 		}
+	}
+
+	// Convert nodeMap to slice for processing
+	nodes := make([]corev1.Node, 0, len(p.nodeMap))
+	for _, node := range p.nodeMap {
+		nodes = append(nodes, *node)
 	}
 
 	return p.ProcessNodeData(nodes, pods, includeNamespaces, excludeNamespaces)
