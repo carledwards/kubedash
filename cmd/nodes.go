@@ -61,10 +61,23 @@ func CompareNodes(old, new map[string]NodeData) bool {
 // FormatDuration formats a duration in a human-readable format
 func FormatDuration(d time.Duration) string {
 	d = d.Round(time.Minute)
-	h := d / time.Hour
-	d -= h * time.Hour
-	m := d / time.Minute
-	return fmt.Sprintf("%dh%dm", h, m)
+	days := int(d.Hours() / 24)
+	hours := int(d.Hours()) % 24
+	minutes := int(d.Minutes()) % 60
+
+	if days >= 10 {
+		return fmt.Sprintf("%dd", days)
+	} else if days > 0 {
+		if hours == 0 {
+			return fmt.Sprintf("%dd", days)
+		}
+		return fmt.Sprintf("%dd%dh", days, hours)
+	}
+
+	if minutes == 0 {
+		return fmt.Sprintf("%dh", hours)
+	}
+	return fmt.Sprintf("%dh%dm", hours, minutes)
 }
 
 // SetupNodeTable sets up the table headers and formatting
