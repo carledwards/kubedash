@@ -394,6 +394,7 @@ func updateTable(table *tview.Table, nodeData map[string]cmd.NodeData, podsByNod
 
 	headers = append(headers, namespaces...)
 
+	// Set up header row
 	for i, header := range headers {
 		cell := tview.NewTableCell(header).
 			SetTextColor(tcell.ColorWhite).
@@ -418,34 +419,45 @@ func updateTable(table *tview.Table, nodeData map[string]cmd.NodeData, podsByNod
 	i := 1
 	for _, nodeName := range nodeNames {
 		data := nodeData[nodeName]
+
+		// Node Name column
 		table.SetCell(i, 0, tview.NewTableCell(data.Name).
 			SetTextColor(tcell.ColorSkyblue).
 			SetExpansion(1))
+
+		// Status column
 		table.SetCell(i, 1, tview.NewTableCell(data.Status).
 			SetTextColor(func() tcell.Color {
-				if data.Status == "Ready" {
+				if data.Status == cmd.NodeStatusReady {
 					return tcell.ColorGreen
 				}
 				return tcell.ColorRed
 			}()).
 			SetExpansion(1))
+
+		// Version column
 		table.SetCell(i, 2, tview.NewTableCell(data.Version).
 			SetTextColor(tcell.ColorSkyblue).
 			SetExpansion(1))
+
+		// Age column
 		table.SetCell(i, 3, tview.NewTableCell(data.Age).
 			SetTextColor(tcell.ColorSkyblue).
 			SetExpansion(1).
-			SetAlign(tview.AlignRight)) // Right-align Age
+			SetAlign(tview.AlignRight))
+
+		// PODS column
 		table.SetCell(i, 4, tview.NewTableCell(data.PodCount).
 			SetTextColor(tcell.ColorSkyblue).
 			SetExpansion(1).
-			SetAlign(tview.AlignRight)) // Right-align PODS
+			SetAlign(tview.AlignRight))
 
+		// Namespace columns with pod indicators
 		for nsIdx, namespace := range namespaces {
 			indicators := podsByNode[data.Name][namespace]
 			cell := tview.NewTableCell(strings.Join(indicators, "")).
 				SetExpansion(1).
-				SetAlign(tview.AlignLeft) // Keep pod indicators left-aligned
+				SetAlign(tview.AlignLeft)
 			table.SetCell(i, 5+nsIdx, cell)
 		}
 		i++

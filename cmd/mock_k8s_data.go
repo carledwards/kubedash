@@ -34,38 +34,6 @@ func (p *MockK8sDataProvider) GetClusterName() string {
 	return p.clusterName
 }
 
-// GetPodsByNode implements PodProvider interface
-func (p *MockK8sDataProvider) GetPodsByNode(includeNamespaces, excludeNamespaces map[string]bool) (map[string]map[string]PodInfo, error) {
-	result := make(map[string]map[string]PodInfo)
-
-	// Copy the existing pod states
-	for nodeName, pods := range p.podStates {
-		nodePods := make(map[string]PodInfo)
-		for podName, podInfo := range pods {
-			// Extract namespace from pod name (mock-specific format)
-			namespace := "default"
-			if parts := strings.Split(podName, "-"); len(parts) > 2 {
-				namespace = parts[2]
-			}
-
-			// Apply namespace filtering
-			if excludeNamespaces[namespace] {
-				continue
-			}
-			if len(includeNamespaces) > 0 && !includeNamespaces[namespace] {
-				continue
-			}
-
-			nodePods[podName] = podInfo
-		}
-		if len(nodePods) > 0 {
-			result[nodeName] = nodePods
-		}
-	}
-
-	return result, nil
-}
-
 func createMockNodeConditions(status string) []corev1.NodeCondition {
 	now := metav1.Now()
 	conditions := []corev1.NodeCondition{
@@ -107,7 +75,7 @@ func createMockNodeConditions(status string) []corev1.NodeCondition {
 
 func createMockPodInfo(r *rand.Rand, podName string) PodInfo {
 	// Possible pod statuses
-	statuses := []string{"Running", "Pending", "Failed", "Terminating"}
+	statuses := []string{PodStatusRunning, PodStatusPending, "Failed", PodStatusTerminating}
 	status := statuses[r.Intn(len(statuses))]
 
 	// Create container info
@@ -131,6 +99,37 @@ func createMockPodInfo(r *rand.Rand, podName string) PodInfo {
 		RestartCount:  totalRestarts,
 		ContainerInfo: containers,
 	}
+}
+
+func (p *MockK8sDataProvider) GetPodsByNode(includeNamespaces, excludeNamespaces map[string]bool) (map[string]map[string]PodInfo, error) {
+	result := make(map[string]map[string]PodInfo)
+
+	// Copy the existing pod states
+	for nodeName, pods := range p.podStates {
+		nodePods := make(map[string]PodInfo)
+		for podName, podInfo := range pods {
+			// Extract namespace from pod name (mock-specific format)
+			namespace := "default"
+			if parts := strings.Split(podName, "-"); len(parts) > 2 {
+				namespace = parts[2]
+			}
+
+			// Apply namespace filtering
+			if excludeNamespaces[namespace] {
+				continue
+			}
+			if len(includeNamespaces) > 0 && !includeNamespaces[namespace] {
+				continue
+			}
+
+			nodePods[podName] = podInfo
+		}
+		if len(nodePods) > 0 {
+			result[nodeName] = nodePods
+		}
+	}
+
+	return result, nil
 }
 
 func (p *MockK8sDataProvider) UpdateNodeData(includeNamespaces, excludeNamespaces map[string]bool) (map[string]NodeData, map[string]map[string][]string, error) {

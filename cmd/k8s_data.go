@@ -3,8 +3,6 @@ package cmd
 import (
 	"context"
 	"fmt"
-	"sort"
-	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -110,91 +108,10 @@ func (p *RealK8sDataProvider) GetPodsByNode(includeNamespaces, excludeNamespaces
 			podsByNode[nodeName] = make(map[string]PodInfo)
 		}
 
-		podsByNode[nodeName][pod.Name] = getPodInfo(&pod)
+		podsByNode[nodeName][pod.Name] = GetPodInfo(&pod)
 	}
 
 	return podsByNode, nil
-}
-
-// SortPodIndicators sorts pod indicators by color (RED, YELLOW, GREEN)
-func SortPodIndicators(indicators []string) []string {
-	// Define color priority (red = 0, yellow = 1, green = 2)
-	colorPriority := map[string]int{
-		"red":    0,
-		"yellow": 1,
-		"green":  2,
-	}
-
-	// Sort indicators by color
-	sort.Slice(indicators, func(i, j int) bool {
-		var color1, color2 string
-		if strings.Contains(indicators[i], "[red]") {
-			color1 = "red"
-		} else if strings.Contains(indicators[i], "[yellow]") {
-			color1 = "yellow"
-		} else {
-			color1 = "green"
-		}
-
-		if strings.Contains(indicators[j], "[red]") {
-			color2 = "red"
-		} else if strings.Contains(indicators[j], "[yellow]") {
-			color2 = "yellow"
-		} else {
-			color2 = "green"
-		}
-
-		return colorPriority[color1] < colorPriority[color2]
-	})
-
-	return indicators
-}
-
-// getPodInfo extracts PodInfo from a Kubernetes Pod
-func getPodInfo(pod *corev1.Pod) PodInfo {
-	podInfo := PodInfo{
-		Name:          pod.Name,
-		Status:        string(pod.Status.Phase),
-		RestartCount:  0,
-		ContainerInfo: make(map[string]ContainerInfo),
-	}
-
-	// Get container information
-	for _, container := range pod.Spec.Containers {
-		var containerStatus *corev1.ContainerStatus
-		for i := range pod.Status.ContainerStatuses {
-			if pod.Status.ContainerStatuses[i].Name == container.Name {
-				containerStatus = &pod.Status.ContainerStatuses[i]
-				break
-			}
-		}
-
-		status := "Unknown"
-		restartCount := 0
-		if containerStatus != nil {
-			if containerStatus.State.Running != nil {
-				status = "Running"
-			} else if containerStatus.State.Waiting != nil {
-				status = containerStatus.State.Waiting.Reason
-			} else if containerStatus.State.Terminated != nil {
-				status = containerStatus.State.Terminated.Reason
-			}
-			restartCount = int(containerStatus.RestartCount)
-			podInfo.RestartCount += restartCount
-		}
-
-		podInfo.ContainerInfo[container.Name] = ContainerInfo{
-			Status:       status,
-			RestartCount: restartCount,
-		}
-	}
-
-	// Handle terminating state
-	if pod.DeletionTimestamp != nil {
-		podInfo.Status = "Terminating"
-	}
-
-	return podInfo
 }
 
 // UpdateNodeData implements K8sProvider interface

@@ -39,11 +39,11 @@ func (p *BaseK8sDataProvider) ProcessNodeData(
 	// Initialize node data structures and total pod counts
 	nodeTotalPods := make(map[string]int)
 	for _, node := range nodes {
-		nodeStatus := "NotReady"
+		nodeStatus := NodeStatusNotReady
 		for _, condition := range node.Status.Conditions {
 			if condition.Type == corev1.NodeReady {
 				if condition.Status == corev1.ConditionTrue {
-					nodeStatus = "Ready"
+					nodeStatus = NodeStatusReady
 				}
 				break
 			}
@@ -99,7 +99,7 @@ func (p *BaseK8sDataProvider) ProcessNodeData(
 
 		// Update pod info in node data
 		if data, exists := nodeData[nodeName]; exists {
-			podInfo := getPodInfo(&pod)
+			podInfo := GetPodInfo(&pod)
 			data.Pods[pod.Name] = podInfo
 			data.TotalPods = nodeTotalPods[nodeName]
 
