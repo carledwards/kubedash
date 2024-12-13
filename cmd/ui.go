@@ -84,10 +84,9 @@ func (ui *UI) Setup() error {
 	mainFlex.AddItem(table, 0, 2, true)
 	mainFlex.AddItem(ui.changeLogView.GetFlex(), 0, 1, false)
 
-	// Create a flex container with padding
+	// Create a flex container without top padding
 	ui.mainFlex = tview.NewFlex().
 		SetDirection(tview.FlexRow).
-		AddItem(nil, 1, 1, false).
 		AddItem(tview.NewFlex().
 			SetDirection(tview.FlexColumn).
 			AddItem(nil, 1, 1, false).
