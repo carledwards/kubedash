@@ -19,6 +19,8 @@ type UI struct {
 	focusIndex    int
 	components    []tview.Primitive
 	mainFlex      *tview.Flex
+	pages         *tview.Pages
+	errorModal    *tview.Modal
 }
 
 // NewUI creates a new UI instance
@@ -26,8 +28,23 @@ func NewUI(mainApp *App) *UI {
 	ui := &UI{
 		app:     tview.NewApplication(),
 		mainApp: mainApp,
+		pages:   tview.NewPages(),
 	}
 	return ui
+}
+
+// ShowErrorMessage displays an error message modal
+func (ui *UI) ShowErrorMessage() {
+	if ui.errorModal == nil {
+		ui.errorModal = tview.NewModal().
+			SetText("Unable to fetch Kubernetes data. Retrying in background...")
+	}
+	ui.pages.AddPage("error", ui.errorModal, false, true)
+}
+
+// DismissErrorMessage removes the error message modal
+func (ui *UI) DismissErrorMessage() {
+	ui.pages.RemovePage("error")
 }
 
 // Setup initializes all UI components
@@ -77,6 +94,9 @@ func (ui *UI) Setup() error {
 			AddItem(nil, 1, 1, false),
 			0, 1, true)
 
+	// Add main UI to pages
+	ui.pages.AddPage("main", ui.mainFlex, true, true)
+
 	// Set up input handling
 	ui.setupKeyboardHandling()
 	ui.setupMouseHandling()
@@ -98,7 +118,7 @@ func (ui *UI) Setup() error {
 	ui.app.SetBeforeDrawFunc(func(screen tcell.Screen) bool {
 		width, height := screen.Size()
 		if !ui.mainApp.IsShowingDetails() {
-			ui.mainFlex.SetRect(0, 0, width, height)
+			ui.pages.SetRect(0, 0, width, height)
 		} else {
 			ui.detailsView.GetFlex().SetRect(0, 0, width, height)
 		}
@@ -106,7 +126,7 @@ func (ui *UI) Setup() error {
 	})
 
 	ui.app.SetFocus(table)
-	ui.app.SetRoot(ui.mainFlex, true).EnableMouse(true)
+	ui.app.SetRoot(ui.pages, true).EnableMouse(true)
 
 	return nil
 }
@@ -123,7 +143,7 @@ func (ui *UI) setupKeyboardHandling() {
 		// Handle global 'r' key for refreshing data
 		if !ui.mainApp.IsShowingDetails() && event.Rune() == 'r' {
 			if err := ui.mainApp.refreshData(); err != nil {
-				fmt.Printf("Error refreshing data: %v\n", err)
+				ui.ShowErrorMessage()
 			}
 			return nil
 		}
@@ -131,7 +151,7 @@ func (ui *UI) setupKeyboardHandling() {
 		if event.Key() == tcell.KeyEscape {
 			if ui.mainApp.IsShowingDetails() {
 				ui.mainApp.SetShowingDetails(false)
-				ui.app.SetRoot(ui.mainFlex, true)
+				ui.app.SetRoot(ui.pages, true)
 				ui.app.SetFocus(ui.nodeView.GetTable())
 				return nil
 			}

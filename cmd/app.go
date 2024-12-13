@@ -23,6 +23,7 @@ type App struct {
 	isRefreshing   atomic.Bool
 	spinnerIndex   atomic.Int32
 	showingDetails bool
+	hasError       atomic.Bool
 }
 
 // NewApp creates a new application instance
@@ -88,7 +89,14 @@ func (a *App) Run() error {
 	go func() {
 		for range ticker.C {
 			if err := a.refreshData(); err != nil {
-				fmt.Printf("Error refreshing data: %v\n", err)
+				if !a.hasError.Load() {
+					a.hasError.Store(true)
+					a.ui.app.QueueUpdateDraw(func() {
+						a.ui.ShowErrorMessage()
+					})
+				}
+				// Start background retry if not already running
+				go a.retryInBackground()
 			}
 		}
 	}()
@@ -116,6 +124,31 @@ func (a *App) Run() error {
 	return nil
 }
 
+// retryInBackground attempts to refresh data in the background
+func (a *App) retryInBackground() {
+	if !a.hasError.Load() {
+		return // Don't retry if there's no error
+	}
+
+	retryTicker := time.NewTicker(5 * time.Second)
+	defer retryTicker.Stop()
+
+	for range retryTicker.C {
+		if !a.hasError.Load() {
+			return // Stop retrying if error is cleared
+		}
+
+		if err := a.refreshData(); err == nil {
+			// Success - dismiss error message and return
+			a.hasError.Store(false)
+			a.ui.app.QueueUpdateDraw(func() {
+				a.ui.DismissErrorMessage()
+			})
+			return
+		}
+	}
+}
+
 // refreshData updates the node and pod data
 func (a *App) refreshData() error {
 	if !a.showingDetails && !a.isRefreshing.Load() {
@@ -127,7 +160,7 @@ func (a *App) refreshData() error {
 			a.config.ExcludeNamespaces,
 		)
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to refresh data: %v", err)
 		}
 
 		// Check for changes and update changelog

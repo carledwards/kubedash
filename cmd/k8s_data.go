@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -10,6 +11,8 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/tools/clientcmd/api"
 )
+
+const apiTimeout = 30 * time.Second
 
 // KubeClientWrapper wraps kubernetes clientset and configuration
 type KubeClientWrapper struct {
@@ -83,10 +86,12 @@ func (p *RealK8sDataProvider) GetClusterName() string {
 
 // GetPodsByNode implements PodProvider interface
 func (p *RealK8sDataProvider) GetPodsByNode(includeNamespaces, excludeNamespaces map[string]bool) (map[string]map[string]PodInfo, error) {
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), apiTimeout)
+	defer cancel()
+
 	pods, err := p.client.Clientset.CoreV1().Pods("").List(ctx, metav1.ListOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("failed to list pods: %v", err)
+		return nil, fmt.Errorf("failed to list pods (timeout %v): %v", apiTimeout, err)
 	}
 
 	podsByNode := make(map[string]map[string]PodInfo)
@@ -116,18 +121,19 @@ func (p *RealK8sDataProvider) GetPodsByNode(includeNamespaces, excludeNamespaces
 
 // UpdateNodeData implements K8sProvider interface
 func (p *RealK8sDataProvider) UpdateNodeData(includeNamespaces, excludeNamespaces map[string]bool) (map[string]NodeData, map[string]map[string][]string, error) {
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), apiTimeout)
+	defer cancel()
 
 	// Get nodes
 	nodes, err := p.client.Clientset.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to list nodes: %v", err)
+		return nil, nil, fmt.Errorf("failed to list nodes (timeout %v): %v", apiTimeout, err)
 	}
 
 	// Get pods from all namespaces
 	pods, err := p.client.Clientset.CoreV1().Pods("").List(ctx, metav1.ListOptions{})
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to list pods: %v", err)
+		return nil, nil, fmt.Errorf("failed to list pods (timeout %v): %v", apiTimeout, err)
 	}
 
 	return p.ProcessNodeData(nodes.Items, pods.Items, includeNamespaces, excludeNamespaces)
