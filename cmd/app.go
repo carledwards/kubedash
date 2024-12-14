@@ -14,6 +14,14 @@ type Config struct {
 	LogFilePath       string
 }
 
+// SearchState holds the current search/filter state
+type SearchState struct {
+	Active     bool
+	Query      string
+	TempQuery  string // Holds query while typing, before ENTER
+	SearchMode bool   // True when actively typing (after /)
+}
+
 // App represents the main application
 type App struct {
 	config         *Config
@@ -26,6 +34,7 @@ type App struct {
 	showingPods    bool
 	hasError       atomic.Bool
 	refreshChan    chan struct{} // Channel for triggering refreshes
+	searchState    SearchState   // Track search/filter state
 }
 
 // NewApp creates a new application instance
@@ -47,6 +56,7 @@ func NewApp(config *Config) (*App, error) {
 		provider:    provider,
 		stateCache:  NewStateCache(),
 		refreshChan: make(chan struct{}, 1), // Buffered channel to prevent blocking
+		searchState: SearchState{},          // Initialize search state
 	}
 
 	// Create UI components
@@ -56,6 +66,11 @@ func NewApp(config *Config) (*App, error) {
 	}
 
 	return app, nil
+}
+
+// GetSearchState returns the current search state
+func (a *App) GetSearchState() *SearchState {
+	return &a.searchState
 }
 
 // Run starts the application

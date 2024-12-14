@@ -25,7 +25,8 @@ type UI struct {
 	errorModal     *tview.Modal
 	helpModal      *tview.Modal
 	mainBox        *tview.Box
-	viewStack      []string // Track view navigation
+	viewStack      []string        // Track view navigation
+	searchBox      *tview.TextView // Display search query
 }
 
 // NewUI creates a new UI instance
@@ -107,6 +108,11 @@ func (ui *UI) Setup() error {
 	ui.changeLogView = NewChangeLogView(ui.mainApp.config.LogFilePath)
 	changeLogTable := ui.changeLogView.GetTable()
 
+	// Create search box
+	ui.searchBox = tview.NewTextView().
+		SetDynamicColors(true).
+		SetTextColor(tcell.ColorWhite)
+
 	// Track focusable components
 	ui.components = []tview.Primitive{table, changeLogTable}
 
@@ -129,6 +135,7 @@ func (ui *UI) Setup() error {
 	// Add items to mainFlex with proper focus handling
 	mainFlex.AddItem(table, 0, 2, true)
 	mainFlex.AddItem(ui.changeLogView.GetFlex(), 0, 1, false)
+	mainFlex.AddItem(ui.searchBox, 1, 0, false) // Add search box at the bottom
 
 	// Create a flex container without top padding
 	ui.mainFlex = tview.NewFlex().
@@ -173,6 +180,18 @@ func (ui *UI) Setup() error {
 	return nil
 }
 
+// updateSearchBox updates the search box text based on search state
+func (ui *UI) updateSearchBox() {
+	searchState := ui.mainApp.GetSearchState()
+	if searchState.SearchMode {
+		ui.searchBox.SetText(fmt.Sprintf("[yellow]Search: %s█[-]", searchState.TempQuery))
+	} else if searchState.Active {
+		ui.searchBox.SetText(fmt.Sprintf("[green]Filter: %s[-]", searchState.Query))
+	} else {
+		ui.searchBox.SetText("")
+	}
+}
+
 // hasActiveModal checks if any modal is currently displayed
 func (ui *UI) hasActiveModal() bool {
 	return ui.pages.HasPage("error") || ui.pages.HasPage("help")
@@ -194,9 +213,54 @@ func (ui *UI) setupKeyboardHandling() {
 			return nil
 		}
 
+		searchState := ui.mainApp.GetSearchState()
+
+		// Handle search mode
+		if searchState.SearchMode {
+			switch event.Key() {
+			case tcell.KeyEscape:
+				searchState.SearchMode = false
+				searchState.TempQuery = ""
+				searchState.Active = false
+				searchState.Query = ""
+				ui.updateSearchBox()
+				ui.UpdateTable(ui.nodeView.GetLastNodeData(), ui.nodeView.GetLastPodData())
+				return nil
+			case tcell.KeyEnter:
+				searchState.SearchMode = false
+				searchState.Active = true
+				searchState.Query = searchState.TempQuery
+				ui.updateSearchBox()
+				ui.UpdateTable(ui.nodeView.GetLastNodeData(), ui.nodeView.GetLastPodData())
+				return nil
+			case tcell.KeyBackspace2, tcell.KeyBackspace:
+				if len(searchState.TempQuery) > 0 {
+					searchState.TempQuery = searchState.TempQuery[:len(searchState.TempQuery)-1]
+					ui.updateSearchBox()
+					ui.UpdateTable(ui.nodeView.GetLastNodeData(), ui.nodeView.GetLastPodData())
+				}
+				return nil
+			default:
+				if event.Rune() != 0 {
+					searchState.TempQuery += string(event.Rune())
+					ui.updateSearchBox()
+					ui.UpdateTable(ui.nodeView.GetLastNodeData(), ui.nodeView.GetLastPodData())
+				}
+				return nil
+			}
+		}
+
 		// Handle global '?' key for help when no modal is active
 		if !ui.hasActiveModal() && event.Rune() == KeyHelp {
 			ui.ShowHelpModal()
+			return nil
+		}
+
+		// Handle '/' key to enter search mode
+		if !ui.hasActiveModal() && event.Rune() == '/' {
+			searchState.SearchMode = true
+			searchState.TempQuery = ""
+			ui.updateSearchBox()
 			return nil
 		}
 
@@ -427,13 +491,26 @@ func (ui *UI) handleMainViewKeys(event *tcell.EventKey) *tcell.EventKey {
 			namespace := table.GetCell(0, col).Text
 			if podsByNode, err := ui.mainApp.GetProvider().GetPodsByNode(ui.mainApp.config.IncludeNamespaces, ui.mainApp.config.ExcludeNamespaces); err == nil {
 				if nodePods, ok := podsByNode[nodeName]; ok {
-					// Filter pods by namespace
+					// Get the current search query
+					searchState := ui.mainApp.GetSearchState()
+					var searchQuery string
+					if searchState.SearchMode {
+						searchQuery = searchState.TempQuery
+					} else if searchState.Active {
+						searchQuery = searchState.Query
+					}
+
+					// Filter pods by namespace and search query
 					namespacePods := make(map[string]PodInfo)
 					for podName, podInfo := range nodePods {
 						if podInfo.Namespace == namespace {
-							namespacePods[podName] = podInfo
+							// If there's a search query, only include matching pods
+							if searchQuery == "" || strings.Contains(strings.ToLower(podName), strings.ToLower(searchQuery)) {
+								namespacePods[podName] = podInfo
+							}
 						}
 					}
+
 					ui.podDetailsView.ShowPodDetails(nodeName, namespace, namespacePods)
 					ui.mainApp.SetShowingPods(true)
 					ui.app.SetRoot(ui.podDetailsView.GetFlex(), true)
@@ -451,6 +528,22 @@ func (ui *UI) handleMainViewKeys(event *tcell.EventKey) *tcell.EventKey {
 func (ui *UI) UpdateTable(nodeData map[string]NodeData, podsByNode map[string]map[string][]string) {
 	table := ui.nodeView.GetTable()
 	currentRow, currentCol := table.GetSelection()
+
+	// Store the complete data
+	ui.nodeView.SetAllData(nodeData, podsByNode)
+
+	// Get filtered data based on search state
+	searchState := ui.mainApp.GetSearchState()
+	var filteredNodeData map[string]NodeData
+	var filteredPodData map[string]map[string][]string
+
+	if searchState.SearchMode {
+		filteredNodeData, filteredPodData = ui.nodeView.GetFilteredData(searchState.TempQuery)
+	} else if searchState.Active {
+		filteredNodeData, filteredPodData = ui.nodeView.GetFilteredData(searchState.Query)
+	} else {
+		filteredNodeData, filteredPodData = nodeData, podsByNode
+	}
 
 	table.Clear()
 
@@ -488,14 +581,14 @@ func (ui *UI) UpdateTable(nodeData map[string]NodeData, podsByNode map[string]ma
 	}
 
 	var nodeNames []string
-	for name := range nodeData {
+	for name := range filteredNodeData {
 		nodeNames = append(nodeNames, name)
 	}
 	sort.Strings(nodeNames)
 
 	i := 1
 	for _, nodeName := range nodeNames {
-		data := nodeData[nodeName]
+		data := filteredNodeData[nodeName]
 
 		// Node Name column
 		table.SetCell(i, 0, tview.NewTableCell(data.Name).
@@ -531,7 +624,7 @@ func (ui *UI) UpdateTable(nodeData map[string]NodeData, podsByNode map[string]ma
 
 		// Namespace columns with pod indicators
 		for nsIdx, namespace := range namespaces {
-			indicators := podsByNode[data.Name][namespace]
+			indicators := filteredPodData[data.Name][namespace]
 			cell := tview.NewTableCell(strings.Join(indicators, "")).
 				SetExpansion(1).
 				SetAlign(tview.AlignLeft)
