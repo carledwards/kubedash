@@ -2,11 +2,17 @@ package cmd
 
 import "time"
 
+// Visual formatting
+const (
+	SingleSpace = " "
+	DoubleSpace = "  "
+)
+
 // Pod status indicators with colors
 const (
-	PodIndicatorGreen  = "[green]■[white] "
-	PodIndicatorYellow = "[yellow]■[white] "
-	PodIndicatorRed    = "[red]■[white] "
+	PodIndicatorGreen  = "[green]■[white]" + SingleSpace
+	PodIndicatorYellow = "[yellow]■[white]" + SingleSpace
+	PodIndicatorRed    = "[red]■[white]" + SingleSpace
 )
 
 // Color names for sorting and comparison

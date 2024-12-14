@@ -232,7 +232,7 @@ func FormatMapAsRows(table *tview.Table, startRow int, title string, m map[strin
 	}
 
 	for k, v := range m {
-		table.SetCell(startRow, 0, tview.NewTableCell(fmt.Sprintf("  %s: %s", k, v)))
+		table.SetCell(startRow, 0, tview.NewTableCell(fmt.Sprintf(DoubleSpace+"%s: %s", k, v)))
 		startRow++
 	}
 

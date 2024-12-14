@@ -120,7 +120,7 @@ func (ui *UI) Setup() error {
 	ui.mainBox = tview.NewBox().
 		SetBorder(true).
 		SetBorderColor(tcell.ColorGray).
-		SetTitle(fmt.Sprintf("  %s  ", ui.mainApp.GetProvider().GetClusterName())).
+		SetTitle(fmt.Sprintf(DoubleSpace+"%s"+DoubleSpace, ui.mainApp.GetProvider().GetClusterName())).
 		SetTitleAlign(tview.AlignCenter).
 		SetBorderAttributes(tcell.AttrDim)
 

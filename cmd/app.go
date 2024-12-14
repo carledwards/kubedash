@@ -135,7 +135,7 @@ func (a *App) Run() error {
 				a.ui.app.QueueUpdateDraw(func() {
 					// Update the title with spinner
 					clusterName := a.GetProvider().GetClusterName()
-					a.ui.mainBox.SetTitle(fmt.Sprintf("  %s %s", clusterName, string(a.GetSpinnerChar())))
+					a.ui.mainBox.SetTitle(fmt.Sprintf(DoubleSpace+"%s %s", clusterName, string(a.GetSpinnerChar())))
 				})
 			}
 		}
@@ -213,7 +213,7 @@ func (a *App) refreshData() error {
 		// Force a final redraw to clear the spinner
 		a.ui.app.QueueUpdateDraw(func() {
 			clusterName := a.GetProvider().GetClusterName()
-			a.ui.mainBox.SetTitle(fmt.Sprintf("  %s  ", clusterName))
+			a.ui.mainBox.SetTitle(fmt.Sprintf(DoubleSpace+"%s"+DoubleSpace, clusterName))
 		})
 	}()
 
