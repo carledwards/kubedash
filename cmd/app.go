@@ -75,8 +75,6 @@ func (a *App) GetSearchState() *SearchState {
 
 // Run starts the application
 func (a *App) Run() error {
-	fmt.Println("Starting application...")
-
 	// Initial data load without changelog updates
 	nodeData, podsByNode, err := a.provider.UpdateNodeData(
 		a.config.IncludeNamespaces,
@@ -141,8 +139,6 @@ func (a *App) Run() error {
 		}
 	}()
 	defer spinnerTicker.Stop()
-
-	fmt.Println("Starting UI...")
 
 	// Run the application
 	if err := a.ui.app.Run(); err != nil {

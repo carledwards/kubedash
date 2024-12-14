@@ -2,14 +2,11 @@ package main
 
 import (
 	"flag"
-	"fmt"
 	"k8s-nodes-example/cmd"
 	"strings"
 )
 
 func main() {
-	fmt.Println("Starting application...")
-
 	config := parseFlags()
 
 	app, err := cmd.NewApp(config)
