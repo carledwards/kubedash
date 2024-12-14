@@ -15,6 +15,7 @@ type UI struct {
 	nodeView       *NodeView
 	detailsView    *NodeDetailsView
 	podDetailsView *PodDetailsView
+	logView        *LogView
 	changeLogView  *ChangeLogView
 	mainApp        *App
 	focusIndex     int
@@ -74,6 +75,8 @@ func (ui *UI) Setup() error {
 	// Create details views
 	ui.detailsView = NewNodeDetailsView()
 	ui.podDetailsView = NewPodDetailsView()
+	ui.logView = NewLogView()
+	ui.logView.SetApplication(ui.app)
 
 	// Create changelog view
 	ui.changeLogView = NewChangeLogView(ui.mainApp.config.LogFilePath)
@@ -257,6 +260,27 @@ func (ui *UI) getCurrentDetailsTable() *tview.Table {
 func (ui *UI) handlePodDetailsViewKeys(event *tcell.EventKey) *tcell.EventKey {
 	row, _ := ui.podDetailsView.GetTable().GetSelection()
 	switch event.Key() {
+	case tcell.KeyEnter:
+		if row > 0 { // Skip header row
+			podName := ui.podDetailsView.GetTable().GetCell(row, 0).Text
+			namespace := strings.Split(ui.podDetailsView.GetBox().GetTitle(), "Namespace: ")[1]
+			namespace = strings.Split(namespace, " ")[0]
+
+			// Get pod info from the current view
+			if podsByNode, err := ui.mainApp.GetProvider().GetPodsByNode(ui.mainApp.config.IncludeNamespaces, ui.mainApp.config.ExcludeNamespaces); err == nil {
+				nodeName := strings.Split(ui.podDetailsView.GetBox().GetTitle(), "Node: ")[1]
+				nodeName = strings.Split(nodeName, ",")[0]
+				if nodePods, ok := podsByNode[nodeName]; ok {
+					if podInfo, ok := nodePods[podName]; ok {
+						// Set up log view with proper navigation
+						ui.logView.SetPreviousApp(ui.podDetailsView.GetFlex())
+						ui.logView.ShowPodLogs(ui.mainApp.GetProvider().(*RealK8sDataProvider).client, &podInfo)
+						ui.app.SetRoot(ui.logView.GetFlex(), true)
+					}
+				}
+			}
+		}
+		return nil
 	case tcell.KeyUp:
 		if row > 0 {
 			ui.podDetailsView.GetTable().Select(row-1, 0)
