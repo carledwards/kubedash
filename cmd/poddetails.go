@@ -12,6 +12,7 @@ type PodDetailsView struct {
 	table *tview.Table
 	box   *tview.Box
 	flex  *tview.Flex
+	pods  map[string]PodInfo // Store pods map for reference
 }
 
 // NewPodDetailsView creates a new PodDetailsView instance
@@ -41,6 +42,7 @@ func NewPodDetailsView() *PodDetailsView {
 		table: detailsTable,
 		box:   detailsBox,
 		flex:  detailsFlex,
+		pods:  make(map[string]PodInfo),
 	}
 }
 
@@ -59,8 +61,17 @@ func (dv *PodDetailsView) GetFlex() *tview.Flex {
 	return dv.flex
 }
 
+// GetPodInfo returns the pod info for a given pod name
+func (dv *PodDetailsView) GetPodInfo(podName string) (PodInfo, bool) {
+	pod, ok := dv.pods[podName]
+	return pod, ok
+}
+
 // ShowPodDetails displays the details for pods on a given node and namespace
 func (dv *PodDetailsView) ShowPodDetails(nodeName string, namespace string, pods map[string]PodInfo) {
+	// Store pods map for reference
+	dv.pods = pods
+
 	// Clear and setup details table
 	dv.table.Clear()
 

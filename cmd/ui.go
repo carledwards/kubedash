@@ -264,23 +264,13 @@ func (ui *UI) handlePodDetailsViewKeys(event *tcell.EventKey) *tcell.EventKey {
 	case tcell.KeyEnter:
 		if row > 0 { // Skip header row
 			podName := ui.podDetailsView.GetTable().GetCell(row, 0).Text
-			namespace := strings.Split(ui.podDetailsView.GetBox().GetTitle(), "Namespace: ")[1]
-			namespace = strings.Split(namespace, " ")[0]
-
-			// Get pod info from the current view
-			if podsByNode, err := ui.mainApp.GetProvider().GetPodsByNode(ui.mainApp.config.IncludeNamespaces, ui.mainApp.config.ExcludeNamespaces); err == nil {
-				nodeName := strings.Split(ui.podDetailsView.GetBox().GetTitle(), "Node: ")[1]
-				nodeName = strings.Split(nodeName, ",")[0]
-				if nodePods, ok := podsByNode[nodeName]; ok {
-					if podInfo, ok := nodePods[podName]; ok {
-						// Set up log view with proper navigation
-						ui.logView.SetPreviousApp(ui.podDetailsView.GetFlex())
-						// Store the current table and selection for restoration
-						ui.logView.SetPreviousSelection(ui.podDetailsView.GetTable(), row)
-						ui.logView.ShowPodLogs(ui.mainApp.GetProvider().(*RealK8sDataProvider).client, &podInfo)
-						ui.app.SetRoot(ui.logView.GetFlex(), true)
-					}
-				}
+			if podInfo, ok := ui.podDetailsView.GetPodInfo(podName); ok {
+				// Set up log view with proper navigation
+				ui.logView.SetPreviousApp(ui.podDetailsView.GetFlex())
+				// Store the current table and selection for restoration
+				ui.logView.SetPreviousSelection(ui.podDetailsView.GetTable(), row)
+				ui.logView.ShowPodLogs(ui.mainApp.GetProvider().(*RealK8sDataProvider).client, &podInfo)
+				ui.app.SetRoot(ui.logView.GetFlex(), true)
 			}
 		}
 		return nil
