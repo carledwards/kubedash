@@ -13,13 +13,16 @@ import (
 
 // LogView represents a full-screen log streaming view
 type LogView struct {
-	textView    *tview.TextView
-	flex        *tview.Flex
-	pod         *PodInfo
-	stopChan    chan struct{}
-	app         *tview.Application
-	previousApp tview.Primitive
-	autoScroll  bool
+	textView      *tview.TextView
+	flex          *tview.Flex
+	pod           *PodInfo
+	stopChan      chan struct{}
+	app           *tview.Application
+	previousApp   tview.Primitive
+	previousTable *tview.Table
+	previousRow   int
+	mainApp       *App // Add reference to main app
+	autoScroll    bool
 }
 
 // NewLogView creates a new LogView instance
@@ -48,7 +51,16 @@ func NewLogView() *LogView {
 		case tcell.KeyEscape:
 			logView.Stop()
 			if logView.app != nil && logView.previousApp != nil {
+				// Ensure we stay in pod view mode
+				if logView.mainApp != nil {
+					logView.mainApp.SetShowingPods(true)
+				}
 				logView.app.SetRoot(logView.previousApp, true)
+				// Restore previous selection
+				if logView.previousTable != nil {
+					logView.app.SetFocus(logView.previousTable)
+					logView.previousTable.Select(logView.previousRow, 0)
+				}
 			}
 			return nil
 		case tcell.KeyUp:
@@ -91,9 +103,20 @@ func (l *LogView) SetApplication(app *tview.Application) {
 	l.app = app
 }
 
+// SetMainApp sets the main application reference
+func (l *LogView) SetMainApp(app *App) {
+	l.mainApp = app
+}
+
 // SetPreviousApp sets the previous app to return to when closing logs
 func (l *LogView) SetPreviousApp(app tview.Primitive) {
 	l.previousApp = app
+}
+
+// SetPreviousSelection sets the table and row to restore when returning
+func (l *LogView) SetPreviousSelection(table *tview.Table, row int) {
+	l.previousTable = table
+	l.previousRow = row
 }
 
 // GetFlex returns the flex container

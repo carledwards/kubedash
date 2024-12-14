@@ -77,6 +77,7 @@ func (ui *UI) Setup() error {
 	ui.podDetailsView = NewPodDetailsView()
 	ui.logView = NewLogView()
 	ui.logView.SetApplication(ui.app)
+	ui.logView.SetMainApp(ui.mainApp) // Set the main app reference
 
 	// Create changelog view
 	ui.changeLogView = NewChangeLogView(ui.mainApp.config.LogFilePath)
@@ -274,6 +275,8 @@ func (ui *UI) handlePodDetailsViewKeys(event *tcell.EventKey) *tcell.EventKey {
 					if podInfo, ok := nodePods[podName]; ok {
 						// Set up log view with proper navigation
 						ui.logView.SetPreviousApp(ui.podDetailsView.GetFlex())
+						// Store the current table and selection for restoration
+						ui.logView.SetPreviousSelection(ui.podDetailsView.GetTable(), row)
 						ui.logView.ShowPodLogs(ui.mainApp.GetProvider().(*RealK8sDataProvider).client, &podInfo)
 						ui.app.SetRoot(ui.logView.GetFlex(), true)
 					}
