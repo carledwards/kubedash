@@ -31,7 +31,8 @@ func NewLogView() *LogView {
 		textView: tview.NewTextView().
 			SetDynamicColors(true).
 			SetScrollable(true).
-			SetWrap(true),
+			SetWrap(true).
+			SetTextColor(tcell.ColorSkyblue),
 		stopChan:   make(chan struct{}),
 		autoScroll: true,
 	}
@@ -152,7 +153,7 @@ func (l *LogView) streamLogs(k8s *KubeClientWrapper, podInfo *PodInfo) {
 	req := k8s.Clientset.CoreV1().Pods(podInfo.Namespace).GetLogs(podInfo.Name, podLogOpts)
 	stream, err := req.Stream(context.Background())
 	if err != nil {
-		l.textView.SetText(fmt.Sprintf("[red]Error getting pod logs: %v", err))
+		l.textView.Write([]byte(fmt.Sprintf("[red]Error getting pod logs: %v", err)))
 		return
 	}
 	defer stream.Close()
