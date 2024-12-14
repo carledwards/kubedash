@@ -184,9 +184,9 @@ func (ui *UI) Setup() error {
 func (ui *UI) updateSearchBox() {
 	searchState := ui.mainApp.GetSearchState()
 	if searchState.SearchMode {
-		ui.searchBox.SetText(fmt.Sprintf("[yellow]Search: %s█[-]", searchState.TempQuery))
+		ui.searchBox.SetText(fmt.Sprintf("[yellow]Search Filter: %s█[-]", searchState.TempQuery))
 	} else if searchState.Active {
-		ui.searchBox.SetText(fmt.Sprintf("[green]Filter: %s[-]", searchState.Query))
+		ui.searchBox.SetText(fmt.Sprintf("[green]Search Filter: %s[-]", searchState.Query))
 	} else {
 		ui.searchBox.SetText("")
 	}
@@ -227,9 +227,17 @@ func (ui *UI) setupKeyboardHandling() {
 				ui.UpdateTable(ui.nodeView.GetLastNodeData(), ui.nodeView.GetLastPodData())
 				return nil
 			case tcell.KeyEnter:
-				searchState.SearchMode = false
-				searchState.Active = true
-				searchState.Query = searchState.TempQuery
+				if searchState.TempQuery == "" {
+					// Treat empty search like ESC
+					searchState.SearchMode = false
+					searchState.TempQuery = ""
+					searchState.Active = false
+					searchState.Query = ""
+				} else {
+					searchState.SearchMode = false
+					searchState.Active = true
+					searchState.Query = searchState.TempQuery
+				}
 				ui.updateSearchBox()
 				ui.UpdateTable(ui.nodeView.GetLastNodeData(), ui.nodeView.GetLastPodData())
 				return nil
