@@ -49,21 +49,6 @@ func NewLogView() *LogView {
 	// Set up input handling for the text view
 	logView.textView.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 		switch event.Key() {
-		case tcell.KeyEscape:
-			logView.Stop()
-			if logView.app != nil && logView.previousApp != nil {
-				// Ensure we stay in pod view mode
-				if logView.mainApp != nil {
-					logView.mainApp.SetShowingPods(true)
-				}
-				logView.app.SetRoot(logView.previousApp, true)
-				// Restore previous selection
-				if logView.previousTable != nil {
-					logView.app.SetFocus(logView.previousTable)
-					logView.previousTable.Select(logView.previousRow, 0)
-				}
-			}
-			return nil
 		case tcell.KeyUp:
 			logView.autoScroll = false
 			row, _ := logView.textView.GetScrollOffset()

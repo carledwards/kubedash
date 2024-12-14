@@ -25,14 +25,16 @@ type UI struct {
 	errorModal     *tview.Modal
 	helpModal      *tview.Modal
 	mainBox        *tview.Box
+	viewStack      []string // Track view navigation
 }
 
 // NewUI creates a new UI instance
 func NewUI(mainApp *App) *UI {
 	ui := &UI{
-		app:     tview.NewApplication(),
-		mainApp: mainApp,
-		pages:   tview.NewPages(),
+		app:       tview.NewApplication(),
+		mainApp:   mainApp,
+		pages:     tview.NewPages(),
+		viewStack: []string{"main"}, // Initialize with main view
 	}
 	return ui
 }
@@ -66,6 +68,28 @@ func (ui *UI) DismissHelpModal() {
 	ui.pages.RemovePage("help")
 }
 
+// pushView adds a view to the navigation stack
+func (ui *UI) pushView(name string) {
+	ui.viewStack = append(ui.viewStack, name)
+}
+
+// popView removes and returns the last view from the stack
+func (ui *UI) popView() string {
+	if len(ui.viewStack) <= 1 {
+		return "main"
+	}
+	ui.viewStack = ui.viewStack[:len(ui.viewStack)-1]
+	return ui.viewStack[len(ui.viewStack)-1]
+}
+
+// getCurrentView returns the current view name
+func (ui *UI) getCurrentView() string {
+	if len(ui.viewStack) == 0 {
+		return "main"
+	}
+	return ui.viewStack[len(ui.viewStack)-1]
+}
+
 // Setup initializes all UI components
 func (ui *UI) Setup() error {
 	// Create main table
@@ -77,7 +101,7 @@ func (ui *UI) Setup() error {
 	ui.podDetailsView = NewPodDetailsView()
 	ui.logView = NewLogView()
 	ui.logView.SetApplication(ui.app)
-	ui.logView.SetMainApp(ui.mainApp) // Set the main app reference
+	ui.logView.SetMainApp(ui.mainApp)
 
 	// Create changelog view
 	ui.changeLogView = NewChangeLogView(ui.mainApp.config.LogFilePath)
@@ -176,25 +200,40 @@ func (ui *UI) setupKeyboardHandling() {
 			return nil
 		}
 
-		// If showing pod details, handle its specific keys
-		if ui.mainApp.IsShowingPods() {
-			if event.Key() == tcell.KeyEscape {
+		// Handle ESC key based on current view
+		if event.Key() == tcell.KeyEscape {
+			switch ui.getCurrentView() {
+			case "logs":
+				// Return to pod details view
+				ui.mainApp.SetShowingPods(true)
+				ui.app.SetRoot(ui.podDetailsView.GetFlex(), true)
+				ui.app.SetFocus(ui.podDetailsView.GetTable())
+				ui.popView()
+				return nil
+			case "pods":
+				// Return to main view
 				ui.mainApp.SetShowingPods(false)
 				ui.app.SetRoot(ui.pages, true)
 				ui.app.SetFocus(ui.nodeView.GetTable())
+				ui.popView()
+				return nil
+			case "details":
+				// Return to main view
+				ui.mainApp.SetShowingDetails(false)
+				ui.app.SetRoot(ui.pages, true)
+				ui.app.SetFocus(ui.nodeView.GetTable())
+				ui.popView()
 				return nil
 			}
+		}
+
+		// If showing pod details, handle its specific keys
+		if ui.mainApp.IsShowingPods() {
 			return ui.handlePodDetailsViewKeys(event)
 		}
 
 		// If showing node details view, handle its specific keys
 		if ui.mainApp.IsShowingDetails() {
-			if event.Key() == tcell.KeyEscape {
-				ui.mainApp.SetShowingDetails(false)
-				ui.app.SetRoot(ui.pages, true)
-				ui.app.SetFocus(ui.nodeView.GetTable())
-				return nil
-			}
 			return ui.handleDetailsViewKeys(event)
 		}
 
@@ -271,6 +310,8 @@ func (ui *UI) handlePodDetailsViewKeys(event *tcell.EventKey) *tcell.EventKey {
 				ui.logView.SetPreviousSelection(ui.podDetailsView.GetTable(), row)
 				ui.logView.ShowPodLogs(ui.mainApp.GetProvider().(*RealK8sDataProvider).client, &podInfo)
 				ui.app.SetRoot(ui.logView.GetFlex(), true)
+				// Add logs view to stack
+				ui.pushView("logs")
 			}
 		}
 		return nil
@@ -379,6 +420,7 @@ func (ui *UI) handleMainViewKeys(event *tcell.EventKey) *tcell.EventKey {
 				ui.mainApp.SetShowingDetails(true)
 				ui.app.SetRoot(ui.detailsView.GetFlex(), true)
 				ui.app.SetFocus(ui.detailsView.GetTable())
+				ui.pushView("details")
 				return nil
 			}
 		} else { // Pod columns
@@ -396,6 +438,7 @@ func (ui *UI) handleMainViewKeys(event *tcell.EventKey) *tcell.EventKey {
 					ui.mainApp.SetShowingPods(true)
 					ui.app.SetRoot(ui.podDetailsView.GetFlex(), true)
 					ui.app.SetFocus(ui.podDetailsView.GetTable())
+					ui.pushView("pods")
 					return nil
 				}
 			}
