@@ -17,6 +17,8 @@ type MockK8sDataProvider struct {
 	podStates   map[string]map[string]PodInfo
 	rand        *rand.Rand // node -> pod name -> pod info
 	nodeCounter int        // Counter for generating new node names
+	rawData     map[string]RawNodeData
+	podsByNode  map[string]map[string][]string
 }
 
 // NewMockK8sDataProvider creates a new MockK8sDataProvider
@@ -29,12 +31,14 @@ func NewMockK8sDataProvider() *MockK8sDataProvider {
 		podStates:   make(map[string]map[string]PodInfo),
 		rand:        rand.New(rand.NewSource(time.Now().UnixNano())),
 		nodeCounter: 3, // Start with 3 initial nodes
+		rawData:     make(map[string]RawNodeData),
+		podsByNode:  make(map[string]map[string][]string),
 	}
 
 	// Initialize with some default nodes
 	for i := 1; i <= 3; i++ {
 		nodeName := fmt.Sprintf("node%d", i)
-		provider.nodeMap[nodeName] = &corev1.Node{
+		node := &corev1.Node{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: nodeName,
 				CreationTimestamp: metav1.Time{
@@ -48,9 +52,15 @@ func NewMockK8sDataProvider() *MockK8sDataProvider {
 				},
 			},
 		}
+		provider.nodeMap[nodeName] = node
+		provider.rawData[nodeName] = RawNodeData{
+			Node: node,
+			Pods: make(map[string]*corev1.Pod),
+		}
 
 		// Add some default pods to each node
 		provider.podStates[nodeName] = make(map[string]PodInfo)
+		provider.podsByNode[nodeName] = make(map[string][]string)
 
 		// Add a monitoring pod
 		monitoringPod := fmt.Sprintf("%s-pod-monitoring-1", nodeName)
@@ -92,6 +102,21 @@ func NewMockK8sDataProvider() *MockK8sDataProvider {
 
 func (p *MockK8sDataProvider) GetClusterName() string {
 	return p.clusterName
+}
+
+// GetPodsByNode returns the current pod data by node
+func (p *MockK8sDataProvider) GetPodsByNode() map[string]map[string][]string {
+	return p.podsByNode
+}
+
+// GetRawData implements K8sProvider interface
+func (p *MockK8sDataProvider) GetRawData() (map[string]RawNodeData, error) {
+	return p.rawData, nil
+}
+
+// GetFilteredData implements K8sProvider interface
+func (p *MockK8sDataProvider) GetFilteredData(criteria FilterCriteria) (map[string]NodeData, map[string]map[string][]string, error) {
+	return p.filterAndTransformData(p.rawData, criteria)
 }
 
 func createMockNodeConditions(status string) []corev1.NodeCondition {
@@ -161,37 +186,6 @@ func createMockPodInfo(r *rand.Rand, podName string) PodInfo {
 	}
 }
 
-func (p *MockK8sDataProvider) GetPodsByNode(includeNamespaces, excludeNamespaces map[string]bool) (map[string]map[string]PodInfo, error) {
-	result := make(map[string]map[string]PodInfo)
-
-	// Copy the existing pod states
-	for nodeName, pods := range p.podStates {
-		nodePods := make(map[string]PodInfo)
-		for podName, podInfo := range pods {
-			// Extract namespace from pod name (mock-specific format)
-			namespace := "default"
-			if parts := strings.Split(podName, "-"); len(parts) > 2 {
-				namespace = parts[2]
-			}
-
-			// Apply namespace filtering
-			if excludeNamespaces[namespace] {
-				continue
-			}
-			if len(includeNamespaces) > 0 && !includeNamespaces[namespace] {
-				continue
-			}
-
-			nodePods[podName] = podInfo
-		}
-		if len(nodePods) > 0 {
-			result[nodeName] = nodePods
-		}
-	}
-
-	return result, nil
-}
-
 func (p *MockK8sDataProvider) UpdateNodeData(includeNamespaces, excludeNamespaces map[string]bool) (map[string]NodeData, map[string]map[string][]string, error) {
 	r := p.rand
 
@@ -202,13 +196,6 @@ func (p *MockK8sDataProvider) UpdateNodeData(includeNamespaces, excludeNamespace
 	}
 
 	// Randomly pick a change type
-	// 0 = pod addition
-	// 1 = pod status change
-	// 2 = node readiness change
-	// 3 = restart count change
-	// 4 = add new node
-	// 5 = delete node
-	// 6 = delete pod
 	changeType := r.Intn(7)
 
 	// Process changes based on type
@@ -289,7 +276,7 @@ func (p *MockK8sDataProvider) UpdateNodeData(includeNamespaces, excludeNamespace
 	case 4: // Add new node
 		p.nodeCounter++
 		newNodeName := fmt.Sprintf("node%d", p.nodeCounter)
-		p.nodeMap[newNodeName] = &corev1.Node{
+		node := &corev1.Node{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: newNodeName,
 				CreationTimestamp: metav1.Time{
@@ -303,6 +290,11 @@ func (p *MockK8sDataProvider) UpdateNodeData(includeNamespaces, excludeNamespace
 				},
 			},
 		}
+		p.nodeMap[newNodeName] = node
+		p.rawData[newNodeName] = RawNodeData{
+			Node: node,
+			Pods: make(map[string]*corev1.Pod),
+		}
 		nodeNames = append(nodeNames, newNodeName)
 
 	case 5: // Delete node
@@ -310,6 +302,7 @@ func (p *MockK8sDataProvider) UpdateNodeData(includeNamespaces, excludeNamespace
 			randomNode := nodeNames[r.Intn(len(nodeNames))]
 			delete(p.nodeMap, randomNode)
 			delete(p.podStates, randomNode)
+			delete(p.rawData, randomNode)
 		}
 
 	case 6: // Delete pod
@@ -322,32 +315,39 @@ func (p *MockK8sDataProvider) UpdateNodeData(includeNamespaces, excludeNamespace
 				}
 				randomPod := podKeys[r.Intn(len(podKeys))]
 				delete(p.podStates[randomNode], randomPod)
+				if rawData, exists := p.rawData[randomNode]; exists {
+					delete(rawData.Pods, randomPod)
+				}
 			}
 		}
 	}
 
-	// Build pods list from pod states
+	// Build pods list from pod states and update raw data
 	pods := make([]corev1.Pod, 0)
 	for nodeName, nodePods := range p.podStates {
-		for podName, podInfo := range nodePods {
-			namespace := "default"
-			if parts := strings.Split(podName, "-"); len(parts) > 2 {
-				namespace = parts[2]
-			}
+		if rawData, exists := p.rawData[nodeName]; exists {
+			for podName, podInfo := range nodePods {
+				namespace := "default"
+				if parts := strings.Split(podName, "-"); len(parts) > 2 {
+					namespace = parts[2]
+				}
 
-			pod := corev1.Pod{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      podName,
-					Namespace: namespace,
-				},
-				Spec: corev1.PodSpec{
-					NodeName: nodeName,
-				},
-				Status: corev1.PodStatus{
-					Phase: corev1.PodPhase(podInfo.Status),
-				},
+				pod := &corev1.Pod{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      podName,
+						Namespace: namespace,
+					},
+					Spec: corev1.PodSpec{
+						NodeName: nodeName,
+					},
+					Status: corev1.PodStatus{
+						Phase: corev1.PodPhase(podInfo.Status),
+					},
+				}
+				pods = append(pods, *pod)
+				rawData.Pods[podName] = pod
 			}
-			pods = append(pods, pod)
+			p.rawData[nodeName] = rawData
 		}
 	}
 
@@ -357,5 +357,12 @@ func (p *MockK8sDataProvider) UpdateNodeData(includeNamespaces, excludeNamespace
 		nodes = append(nodes, *node)
 	}
 
-	return p.ProcessNodeData(nodes, pods, includeNamespaces, excludeNamespaces)
+	// Apply initial filtering
+	criteria := FilterCriteria{
+		IncludeNamespaces: includeNamespaces,
+		ExcludeNamespaces: excludeNamespaces,
+		SearchQuery:       "",
+	}
+
+	return p.filterAndTransformData(p.rawData, criteria)
 }

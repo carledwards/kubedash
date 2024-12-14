@@ -58,6 +58,8 @@ type RealK8sDataProvider struct {
 	BaseK8sDataProvider
 	client      *KubeClientWrapper
 	clusterName string
+	rawData     map[string]RawNodeData
+	podsByNode  map[string]map[string][]string
 }
 
 // NewRealK8sDataProvider creates a new RealK8sDataProvider
@@ -73,6 +75,8 @@ func NewRealK8sDataProvider() (*RealK8sDataProvider, error) {
 		},
 		client:      client,
 		clusterName: clusterName,
+		rawData:     make(map[string]RawNodeData),
+		podsByNode:  make(map[string]map[string][]string),
 	}, nil
 }
 
@@ -81,39 +85,19 @@ func (p *RealK8sDataProvider) GetClusterName() string {
 	return p.clusterName
 }
 
-// GetPodsByNode implements PodProvider interface
-func (p *RealK8sDataProvider) GetPodsByNode(includeNamespaces, excludeNamespaces map[string]bool) (map[string]map[string]PodInfo, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), APITimeout)
-	defer cancel()
+// GetPodsByNode returns the current pod data by node
+func (p *RealK8sDataProvider) GetPodsByNode() map[string]map[string][]string {
+	return p.podsByNode
+}
 
-	pods, err := p.client.Clientset.CoreV1().Pods("").List(ctx, metav1.ListOptions{})
-	if err != nil {
-		return nil, fmt.Errorf("failed to list pods (timeout %v): %v", APITimeout, err)
-	}
+// GetRawData implements K8sProvider interface
+func (p *RealK8sDataProvider) GetRawData() (map[string]RawNodeData, error) {
+	return p.rawData, nil
+}
 
-	podsByNode := make(map[string]map[string]PodInfo)
-	for _, pod := range pods.Items {
-		nodeName := pod.Spec.NodeName
-		if nodeName == "" {
-			continue
-		}
-
-		ns := pod.Namespace
-		if excludeNamespaces[ns] {
-			continue
-		}
-		if len(includeNamespaces) > 0 && !includeNamespaces[ns] {
-			continue
-		}
-
-		if _, exists := podsByNode[nodeName]; !exists {
-			podsByNode[nodeName] = make(map[string]PodInfo)
-		}
-
-		podsByNode[nodeName][pod.Name] = GetPodInfo(&pod)
-	}
-
-	return podsByNode, nil
+// GetFilteredData implements K8sProvider interface
+func (p *RealK8sDataProvider) GetFilteredData(criteria FilterCriteria) (map[string]NodeData, map[string]map[string][]string, error) {
+	return p.filterAndTransformData(p.rawData, criteria)
 }
 
 // UpdateNodeData implements K8sProvider interface
@@ -133,5 +117,36 @@ func (p *RealK8sDataProvider) UpdateNodeData(includeNamespaces, excludeNamespace
 		return nil, nil, fmt.Errorf("failed to list pods (timeout %v): %v", APITimeout, err)
 	}
 
-	return p.ProcessNodeData(nodes.Items, pods.Items, includeNamespaces, excludeNamespaces)
+	// Build raw data
+	p.rawData = make(map[string]RawNodeData)
+	for i := range nodes.Items {
+		node := &nodes.Items[i]
+		p.nodeMap[node.Name] = node
+		p.rawData[node.Name] = RawNodeData{
+			Node: node,
+			Pods: make(map[string]*corev1.Pod),
+		}
+	}
+
+	// Add pods to raw data
+	for i := range pods.Items {
+		pod := &pods.Items[i]
+		nodeName := pod.Spec.NodeName
+		if nodeName == "" {
+			continue
+		}
+		if data, exists := p.rawData[nodeName]; exists {
+			data.Pods[pod.Name] = pod
+			p.rawData[nodeName] = data
+		}
+	}
+
+	// Apply initial filtering
+	criteria := FilterCriteria{
+		IncludeNamespaces: includeNamespaces,
+		ExcludeNamespaces: excludeNamespaces,
+		SearchQuery:       "",
+	}
+
+	return p.filterAndTransformData(p.rawData, criteria)
 }

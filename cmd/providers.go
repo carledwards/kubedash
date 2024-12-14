@@ -4,34 +4,44 @@ import (
 	corev1 "k8s.io/api/core/v1"
 )
 
-// ClusterProvider handles cluster-level operations
+// ClusterProvider defines methods for getting cluster information
 type ClusterProvider interface {
-	// GetClusterName returns the name of the cluster
+	// GetClusterName returns the name of the current cluster
 	GetClusterName() string
-}
 
-// NodeProvider handles node-specific operations
-type NodeProvider interface {
 	// GetNodeMap returns the current node map
 	GetNodeMap() map[string]*corev1.Node
-}
-
-// PodProvider handles pod-specific operations
-type PodProvider interface {
-	// GetPodsByNode returns pod data organized by node
-	GetPodsByNode(includeNamespaces, excludeNamespaces map[string]bool) (map[string]map[string]PodInfo, error)
 }
 
 // K8sProvider combines all provider interfaces
 type K8sProvider interface {
 	ClusterProvider
-	NodeProvider
-	PodProvider
 
 	// UpdateNodeData fetches the latest node and pod data
+	// Parameters:
+	// - includeNamespaces: map of namespaces to include (empty means include all)
+	// - excludeNamespaces: map of namespaces to exclude
 	// Returns:
-	// - map[string]NodeData: node data indexed by node name
-	// - map[string]map[string][]string: pod indicators by node and namespace
+	// - map[string]NodeData: filtered node data
+	// - map[string]map[string][]string: filtered pod indicators by node and namespace
 	// - error: any error that occurred
 	UpdateNodeData(includeNamespaces, excludeNamespaces map[string]bool) (map[string]NodeData, map[string]map[string][]string, error)
+
+	// GetRawData returns the unfiltered node and pod data
+	// Returns:
+	// - map[string]RawNodeData: raw node and pod data
+	// - error: any error that occurred
+	GetRawData() (map[string]RawNodeData, error)
+
+	// GetFilteredData returns filtered node and pod data based on criteria
+	// Parameters:
+	// - criteria: filtering criteria to apply
+	// Returns:
+	// - map[string]NodeData: filtered node data
+	// - map[string]map[string][]string: filtered pod indicators by node and namespace
+	// - error: any error that occurred
+	GetFilteredData(criteria FilterCriteria) (map[string]NodeData, map[string]map[string][]string, error)
+
+	// GetPodsByNode returns the current pod data by node
+	GetPodsByNode() map[string]map[string][]string
 }

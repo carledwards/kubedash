@@ -497,25 +497,31 @@ func (ui *UI) handleMainViewKeys(event *tcell.EventKey) *tcell.EventKey {
 			}
 		} else { // Pod columns
 			namespace := table.GetCell(0, col).Text
-			if podsByNode, err := ui.mainApp.GetProvider().GetPodsByNode(ui.mainApp.config.IncludeNamespaces, ui.mainApp.config.ExcludeNamespaces); err == nil {
-				if nodePods, ok := podsByNode[nodeName]; ok {
-					// Get the current search query
-					searchState := ui.mainApp.GetSearchState()
-					var searchQuery string
-					if searchState.SearchMode {
-						searchQuery = searchState.TempQuery
-					} else if searchState.Active {
-						searchQuery = searchState.Query
-					}
+			// Get the current search query
+			searchState := ui.mainApp.GetSearchState()
+			var searchQuery string
+			if searchState.SearchMode {
+				searchQuery = searchState.TempQuery
+			} else if searchState.Active {
+				searchQuery = searchState.Query
+			}
 
-					// Filter pods by namespace and search query
+			// Create filter criteria
+			criteria := FilterCriteria{
+				IncludeNamespaces: ui.mainApp.config.IncludeNamespaces,
+				ExcludeNamespaces: ui.mainApp.config.ExcludeNamespaces,
+				SearchQuery:       searchQuery,
+			}
+
+			// Get filtered data
+			nodeData, _, err := ui.mainApp.GetProvider().GetFilteredData(criteria)
+			if err == nil {
+				if node, ok := nodeData[nodeName]; ok {
+					// Filter pods by namespace
 					namespacePods := make(map[string]PodInfo)
-					for podName, podInfo := range nodePods {
+					for podName, podInfo := range node.Pods {
 						if podInfo.Namespace == namespace {
-							// If there's a search query, only include matching pods
-							if searchQuery == "" || strings.Contains(strings.ToLower(podName), strings.ToLower(searchQuery)) {
-								namespacePods[podName] = podInfo
-							}
+							namespacePods[podName] = podInfo
 						}
 					}
 
