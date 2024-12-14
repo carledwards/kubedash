@@ -61,7 +61,7 @@ const (
 [yellow]?[white] - Show this help
 [yellow]r[white] - Refresh data
 [yellow]c[white] - Clear changelog
-[yellow]Tab[white] - Switch between main view and changelog
+[yellow]/[white] - Filter pods
 [yellow]Enter[white] - Show node details (on node columns) or pod details (on pod columns)
 [yellow]Esc[white] - Close details view or help
 [yellow]↑/↓/←/→[white] - Navigate tables
