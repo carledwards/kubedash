@@ -1,4 +1,4 @@
-# kubedash
+# kubeism
 
 A terminal-based Kubernetes dashboard inspired by Pandora's web UI monitoring tool and k9s. This tool provides a lightweight, efficient way to monitor Kubernetes clusters, particularly focused on GKE environments for monitoring node/pod status and quick log access.
 
@@ -48,7 +48,7 @@ go build
 ## Usage
 
 ```bash
-./kubedash [options]
+./kubeism [options]
 ```
 
 ### Command Line Arguments
