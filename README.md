@@ -40,15 +40,21 @@ The node details view shows:
 
 1. Ensure you have Go installed on your system
 2. Clone the repository
-3. Build the project:
+3. Build the project using make:
 ```bash
-go build
+make build
 ```
+This will create the binary in the `execs` directory.
+
+You can also run:
+- `make test` to run all tests
+- `make cover` to run test coverage suite
+- `make help` to see all available make targets
 
 ## Usage
 
 ```bash
-./kubism [options]
+./execs/kubism [options]
 ```
 
 ### Command Line Arguments
